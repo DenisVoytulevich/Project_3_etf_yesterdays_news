@@ -33,12 +33,8 @@ async def main() -> None:
     async def daily_briefing_job() -> None:
         logger.info("Запуск ежедневного торгового брифинга")
         try:
-            await bot.send_message(
-                settings.telegram_chat_id,
-                "📊 Формирую утренний торговый брифинг (новости вчера + календарь сегодня)...",
-            )
             saved = await service.execute()
-            await send_briefing_to_chat(bot, settings, saved)
+            await send_briefing_to_chat(bot, settings, saved, single_message=True)
             logger.info("Ежедневный брифинг отправлен")
         except ReportGenerationError as exc:
             logger.error("Брифинг не сформирован: %s", exc)

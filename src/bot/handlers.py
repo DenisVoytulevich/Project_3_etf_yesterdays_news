@@ -83,7 +83,13 @@ class BriefingService:
             self._running = False
 
 
-async def send_briefing_to_chat(bot: Bot, settings: Settings, saved: SavedReport) -> None:
+async def send_briefing_to_chat(
+    bot: Bot,
+    settings: Settings,
+    saved: SavedReport,
+    *,
+    single_message: bool = False,
+) -> None:
     yaml_cfg = load_yaml_config()
     max_msg = yaml_cfg.get("telegram_max_message", 4000)
     caption = (
@@ -98,7 +104,18 @@ async def send_briefing_to_chat(bot: Bot, settings: Settings, saved: SavedReport
                 saved.pdf_path,
                 filename=saved.metadata.pdf_file or saved.pdf_path.name,
             ),
-            caption=caption,
+            caption=None if single_message else caption,
+        )
+        return
+
+    text = saved.markdown
+    if single_message:
+        if len(text) > max_msg:
+            text = text[: max_msg - 20].rstrip() + "\n\n…"
+        await bot.send_message(
+            settings.telegram_chat_id,
+            text,
+            parse_mode="Markdown",
         )
         return
 

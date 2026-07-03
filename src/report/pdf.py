@@ -372,9 +372,16 @@ def _is_sector_rating_header(header: str) -> bool:
     return header.strip().lower() == "рейтинг"
 
 
+def _is_portfolio_influence_header(header: str) -> bool:
+    """Колонка «Влияние» в §3 (не «Влияние на драйвер сектора»)."""
+    return header.strip().lower() in {"влияние", "значимость"}
+
+
 def _column_align(header: str, values: list[str]) -> str:
     h = header.lower().strip()
     if _is_index_header(header) or _is_sector_rating_header(header):
+        return "CENTER"
+    if _is_portfolio_influence_header(header):
         return "CENTER"
     if "сила события" in h:
         return "CENTER"
@@ -421,7 +428,7 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
         if h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] == "рейтинг":
             return (0.06, 0.30, 0.15, 0.49)
         if "событие" in h[0] and "сила события" in h[1]:
-            return (0.40, 0.08, 0.14, 0.38)
+            return (0.40, 0.05, 0.17, 0.38)
         if h[0] == "#" and "отрасль" in h[3]:
             return (0.05, 0.40, 0.20, 0.35)
 
@@ -440,7 +447,7 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
         if h[0] == "время" and h[1] == "событие" and h[2] == "тип" and "важность" in h[3]:
             return (0.12, 0.25, 0.15, 0.12, 0.36)
         if "компания" in h[0] and "зона" in h[1] and "новость" in h[3]:
-            return (0.18, 0.10, 0.14, 0.42, 0.16)
+            return (0.18, 0.14, 0.14, 0.42, 0.12)
 
     return None
 
@@ -677,6 +684,8 @@ def _column_kind(header: str) -> str | None:
         return "event_strength"
     if h == "время":
         return "time"
+    if _is_portfolio_influence_header(header):
+        return "portfolio_influence"
     if "отрасль" in h:
         return "sector"
     return None
@@ -707,7 +716,7 @@ def _format_table_cell(header: str, value: str) -> str:
     kind = _column_kind(header)
     if kind == "importance":
         return _format_importance_stars(value)
-    if kind in {"priority", "index", "event_strength", "sector_rating", "time"}:
+    if kind in {"priority", "index", "event_strength", "sector_rating", "time", "portfolio_influence"}:
         return value.strip()
     return _normalize_text(value)
 
@@ -726,6 +735,9 @@ def _ensure_header_fits(
     padding = 3.2
     adjusted = list(widths_mm)
     for j, header in enumerate(headers):
+        kind = _column_kind(header)
+        if kind in {"event_strength", "portfolio_influence"}:
+            continue
         label = _header_cell_text(header)
         needed = pdf.get_string_width(label) + padding
         if needed > adjusted[j]:
@@ -834,7 +846,7 @@ def _ensure_event_strength_col_width(
     header_font_size: float,
     font_size: float,
 ) -> tuple[float, ...]:
-    """Колонка «Сила события»: узкая, значение 1–5 по центру."""
+    """Колонка «Сила события»: узкая, значение 1–5 по центру; заголовок переносится."""
     epw = pdf.epw
     widths_mm = [fraction * epw for fraction in col_widths]
     padding = 3.5
@@ -842,10 +854,8 @@ def _ensure_event_strength_col_width(
     for j, header in enumerate(headers):
         if _column_kind(header) != "event_strength":
             continue
-        pdf.set_font(FONT_REGULAR, "B", header_font_size)
-        needed = pdf.get_string_width(_header_cell_text(header)) + padding
         pdf.set_font(FONT_REGULAR, size=font_size)
-        needed = max(needed, pdf.get_string_width("5") + padding)
+        needed = pdf.get_string_width("5") + padding
         if needed > widths_mm[j]:
             widths_mm[j] = needed
             changed = True
@@ -1020,55 +1030,71 @@ class _ReportPDF(FPDF):
         ncols = len(table.headers)
         font_size = _table_font_size(ncols)
         header_font_size = _table_header_font_size(font_size)
-        col_widths = _compute_col_widths(
-            self, table.headers, table.rows, font_size=font_size
-        )
-        col_widths = _ensure_header_fits(
-            self,
-            table.headers,
-            col_widths,
-            header_font_size=header_font_size,
-        )
-        col_widths = _ensure_importance_col_width(
-            self, table.headers, col_widths, font_size=font_size
-        )
-        col_widths = _ensure_priority_col_width(
-            self,
-            table.headers,
-            col_widths,
-            header_font_size=header_font_size,
-        )
-        col_widths = _ensure_index_col_width(
-            self,
-            table.headers,
-            col_widths,
-            header_font_size=header_font_size,
-            font_size=font_size,
-        )
-        col_widths = _ensure_sector_rating_col_width(
-            self,
-            table.headers,
-            col_widths,
-            header_font_size=header_font_size,
-            font_size=font_size,
-        )
-        col_widths = _ensure_event_strength_col_width(
-            self,
-            table.headers,
-            col_widths,
-            header_font_size=header_font_size,
-            font_size=font_size,
-        )
-        col_widths = _ensure_time_col_width(
-            self,
-            table.headers,
-            col_widths,
-            header_font_size=header_font_size,
-            font_size=font_size,
-        )
-        col_widths = _ensure_sector_col_width(
-            self, table.headers, table.rows, col_widths, font_size=font_size
-        )
+        preset = _match_column_fractions(table.headers)
+        if preset:
+            col_widths = preset
+            if any(_column_kind(h) == "importance" for h in table.headers):
+                col_widths = _ensure_importance_col_width(
+                    self, table.headers, col_widths, font_size=font_size
+                )
+            if any(_is_sector_rating_header(h) for h in table.headers):
+                col_widths = _ensure_sector_rating_col_width(
+                    self,
+                    table.headers,
+                    col_widths,
+                    header_font_size=header_font_size,
+                    font_size=font_size,
+                )
+        else:
+            col_widths = _compute_col_widths(
+                self, table.headers, table.rows, font_size=font_size
+            )
+            col_widths = _ensure_header_fits(
+                self,
+                table.headers,
+                col_widths,
+                header_font_size=header_font_size,
+            )
+            col_widths = _ensure_importance_col_width(
+                self, table.headers, col_widths, font_size=font_size
+            )
+            col_widths = _ensure_priority_col_width(
+                self,
+                table.headers,
+                col_widths,
+                header_font_size=header_font_size,
+            )
+            col_widths = _ensure_index_col_width(
+                self,
+                table.headers,
+                col_widths,
+                header_font_size=header_font_size,
+                font_size=font_size,
+            )
+            col_widths = _ensure_sector_rating_col_width(
+                self,
+                table.headers,
+                col_widths,
+                header_font_size=header_font_size,
+                font_size=font_size,
+            )
+            col_widths = _ensure_event_strength_col_width(
+                self,
+                table.headers,
+                col_widths,
+                header_font_size=header_font_size,
+                font_size=font_size,
+            )
+            col_widths = _ensure_time_col_width(
+                self,
+                table.headers,
+                col_widths,
+                header_font_size=header_font_size,
+                font_size=font_size,
+            )
+            col_widths = _ensure_sector_col_width(
+                self, table.headers, table.rows, col_widths, font_size=font_size
+            )
         col_values = [
             [row[j] if j < len(row) else "" for row in table.rows]
             for j in range(ncols)
@@ -1170,6 +1196,8 @@ class _ReportPDF(FPDF):
                         row.cell(text, align="C", v_align=v_align, **cell_kwargs)
                     elif _column_kind(header) == "sector_rating":
                         row.cell(text, align="C", v_align=v_align, **cell_kwargs)
+                    elif _column_kind(header) == "portfolio_influence":
+                        row.cell(text, align="C", v_align="MIDDLE", **cell_kwargs)
                     elif _column_kind(header) == "importance" and self.star_font_loaded:
                         row.cell(
                             text,
