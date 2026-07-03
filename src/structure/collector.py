@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from src.config import get_project_root, load_yaml_config
+from src.config import load_yaml_config, resolve_data_path
 from src.structure.cache import load_cached_holdings, save_cached_holdings
 from src.structure.holdings import fetch_etf_holdings
 from src.structure.investing import DEFAULT_HEADERS, InvestingDataError, fetch_instrument_by_isin
@@ -27,7 +27,7 @@ def _structure_config() -> dict:
     cache_dir = cfg.get("cache_dir", "data/structure_cache")
     return {
         "enabled": cfg.get("enabled", True),
-        "cache_dir": get_project_root() / cache_dir,
+        "cache_dir": resolve_data_path(cache_dir),
         "cache_ttl_hours": float(cfg.get("cache_ttl_hours", 168)),
         "request_delay_sec": float(cfg.get("request_delay_sec", 0.5)),
         "justetf_fallback": cfg.get("justetf_fallback", True),

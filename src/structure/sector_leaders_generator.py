@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from src.config import get_project_root, load_yaml_config
+from src.config import load_yaml_config, resolve_data_path
 from src.data.models import InterestZoneItem, PortfolioAnalytics, SectorInterest
 from src.structure.labels import (
     holding_keywords_for_sector,
@@ -28,10 +28,7 @@ _AUTO_HEADER = (
 def generated_leaders_path() -> Path:
     cfg = load_yaml_config().get("structure", {})
     rel = cfg.get("sector_leaders_file", "data/generated/sector_leaders.yaml")
-    path = Path(rel)
-    if not path.is_absolute():
-        path = get_project_root() / path
-    return path
+    return resolve_data_path(rel)
 
 
 def _sectors_match(interest_sector: str, etf_sector: str) -> bool:

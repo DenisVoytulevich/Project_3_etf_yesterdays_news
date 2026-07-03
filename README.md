@@ -33,6 +33,14 @@
 
 На сервере код клонируется в `/opt/telegram-bot/briefing-src`, в контейнере бота — `DAILY_BRIEFING_ROOT=/app/briefing`.
 
+Код монтируется read-only; для отчётов и кэша нужен **writable** volume и переменная:
+
+```env
+DAILY_BRIEFING_DATA_DIR=/app/data
+```
+
+В `docker-compose` основного бота смонтируйте, например: `briefing-data:/app/data`.
+
 ## Быстрый старт (локально)
 
 ```bash
@@ -58,6 +66,8 @@ python -m src.main                # автономный Telegram-бот
 | `NEWSAPI_KEY` | NewsAPI для скрининга компаний/отраслей |
 | `TIMEZONE` | Часовой пояс (по умолчанию `Europe/Warsaw`) |
 | `DAILY_BRIEFING_HOUR` / `MINUTE` | Время автоотчёта (9:00) |
+| `DAILY_BRIEFING_ROOT` | Корень кода брифинга в контейнере (`/app/briefing`) |
+| `DAILY_BRIEFING_DATA_DIR` | Writable каталог для отчётов и кэша (`/app/data`) |
 
 ## Структура отчёта
 

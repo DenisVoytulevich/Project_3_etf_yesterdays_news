@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    environment:
+      DAILY_BRIEFING_DATA_DIR: /app/data
     volumes:
       - ../data:/app/data
       - ../credentials:/app/credentials:ro

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import yaml
@@ -36,4 +37,26 @@ def load_yaml_config() -> dict:
 
 
 def get_project_root() -> Path:
+    root = os.environ.get("DAILY_BRIEFING_ROOT")
+    if root:
+        return Path(root)
     return Path(__file__).resolve().parents[1]
+
+
+def get_data_dir() -> Path:
+    """Writable data directory (reports, cache). Separate from code when mounted ro."""
+    data = os.environ.get("DAILY_BRIEFING_DATA_DIR")
+    if data:
+        return Path(data)
+    return get_project_root() / "data"
+
+
+def resolve_data_path(rel: str | Path) -> Path:
+    path = Path(rel)
+    if path.is_absolute():
+        return path
+    rel_posix = path.as_posix()
+    if rel_posix == "data" or rel_posix.startswith("data/"):
+        suffix = path.relative_to("data") if rel_posix != "data" else Path()
+        return get_data_dir() / suffix
+    return get_project_root() / path

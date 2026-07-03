@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.config import get_project_root, load_yaml_config
+from src.config import load_yaml_config, resolve_data_path
 from src.report.pdf import export_markdown_to_pdf
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def reports_config() -> dict[str, Any]:
 
 def reports_base_dir() -> Path:
     cfg = reports_config()
-    return get_project_root() / cfg["output_dir"]
+    return resolve_data_path(cfg["output_dir"])
 
 
 def _report_directory(base: Path, report_id: str) -> Path:
