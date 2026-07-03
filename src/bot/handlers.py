@@ -87,7 +87,7 @@ async def send_briefing_to_chat(bot: Bot, settings: Settings, saved: SavedReport
     yaml_cfg = load_yaml_config()
     max_msg = yaml_cfg.get("telegram_max_message", 4000)
     caption = (
-        f"📊 Торговый брифинг · {saved.metadata.trading_date} "
+        f"Торговый брифинг · {saved.metadata.trading_date} "
         f"(новости за {saved.metadata.yesterday_date})"
     )
 
