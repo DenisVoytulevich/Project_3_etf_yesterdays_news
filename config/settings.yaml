@@ -1,0 +1,105 @@
+# Торговый брифинг — настройки
+
+timezone: Europe/Warsaw
+
+schedule:
+  hour: 9
+  minute: 0
+
+news:
+  max_items: 150
+  lookback_hours: 36
+  # Обязательный скрининг по отраслям интереса (Portfel + Watchlist)
+  mandatory_sector_screening: true
+  sector_query_batch_size: 3
+  sector_query_per_batch: 15
+  # Целевой скрининг компаний портфеля и watchlist (NewsAPI, батчами)
+  mandatory_company_screening: true
+  company_query_batch_size: 5
+  company_query_per_batch: 10
+
+sector_rating:
+  min: -5
+  max: 5
+
+portfolio_companies:
+  min_rows: 3
+  max_rows: 15
+
+pdf:
+  page_size: A4
+  orientation: portrait
+
+# --- Google Sheets (как в Project_3_etf_news) ---
+sheets:
+  portfolio: "Portfel"
+  watchlist: "Watchlist"
+  sectors: ""
+
+portfolio_sheet:
+  name: "Portfel"
+  header_marker: "Ticker"
+  group_column: 0
+
+portfolio_columns:
+  isin: "ISIN"
+  name: "Name of ETF"
+  ticker: "Ticker"
+  volume: "QTY"
+
+watchlist_sheet:
+  name: "Watchlist"
+  header_marker: "ISIN"
+
+watchlist_columns:
+  isin: "ISIN"
+  name: "Name"
+  decision: "Decision"
+
+watchlist_exclude_decisions:
+  - "Не рассматриваю"
+
+sectors_columns:
+  sector: "Отрасль"
+  priority: "Приоритет"
+
+top_portfolio_count: 20
+
+structure:
+  enabled: true
+  cache_dir: data/structure_cache
+  cache_ttl_hours: 168
+  request_delay_sec: 0.5
+  justetf_fallback: true
+  portfolio_holdings_top: 20
+  watchlist_sectors_per_etf: 3
+  watchlist_holdings_per_source: 3
+  holdings_top_limit: 25
+  sector_leaders_file: data/generated/sector_leaders.yaml
+
+news_sources:
+  - name: "Reuters Business"
+    url: "https://feeds.reuters.com/reuters/businessNews"
+    lang: en
+  - name: "Yahoo Finance"
+    url: "https://finance.yahoo.com/news/rssindex"
+    lang: en
+  - name: "Investing.com"
+    url: "https://www.investing.com/rss/news.rss"
+    lang: en
+
+news_per_source: 15
+
+economic_calendar:
+  enabled: true
+  days_ahead: 1
+  min_importance: "средняя"
+  timezone_id: 18
+
+reports:
+  enabled: true
+  output_dir: data/reports
+  keep_days: 365
+  save_pdf: true
+
+telegram_max_message: 4000

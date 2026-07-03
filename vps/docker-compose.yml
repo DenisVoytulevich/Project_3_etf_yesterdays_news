@@ -1,0 +1,24 @@
+services:
+  briefing:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      - ../data:/app/data
+      - ../credentials:/app/credentials:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import src.config"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
