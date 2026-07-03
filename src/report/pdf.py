@@ -83,6 +83,12 @@ _TABLE_HEADER_FILL = (198, 208, 220)
 _TABLE_BODY_ROW_FILL = (248, 250, 252)
 _TABLE_HEADER_SIZE_BOOST = 1.0
 
+# Ширины колонок типовых таблиц (fpdf: веса-пропорции, сумма не обязана быть 1).
+_TABLE1_COL_WIDTHS = (38, 5, 21, 36)  # §1: Событие | Сила события | Сектор | Влияние
+_TABLE2_COL_WIDTHS = (6, 30, 15, 49)  # §2: № | Отрасль | Рейтинг | Обоснование
+_TABLE3_COL_WIDTHS = (18, 14, 14, 42, 12)  # §3: Компания | Зона | Отрасль | Новость | Влияние
+_TABLE4_COL_WIDTHS = (12, 25, 15, 12, 36)  # §4: Время | Событие | Тип | Важность | На что влияет
+
 _DRIVER_SENTIMENT_POSITIVE = (22, 128, 68)
 _DRIVER_SENTIMENT_NEGATIVE = (196, 58, 58)
 _DRIVER_SENTIMENT_NEUTRAL = (100, 116, 139)
@@ -428,7 +434,7 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
         if h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] == "рейтинг":
             return (0.06, 0.30, 0.15, 0.49)
         if "событие" in h[0] and "сила события" in h[1]:
-            return (0.40, 0.05, 0.17, 0.38)
+            return _TABLE1_COL_WIDTHS
         if h[0] == "#" and "отрасль" in h[3]:
             return (0.05, 0.40, 0.20, 0.35)
 
@@ -445,11 +451,38 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
         if "дата" in h[0] and "почему важно" in h[3]:
             return (0.13, 0.17, 0.16, 0.28, 0.26)
         if h[0] == "время" and h[1] == "событие" and h[2] == "тип" and "важность" in h[3]:
-            return (0.12, 0.25, 0.15, 0.12, 0.36)
+            return _TABLE4_COL_WIDTHS
         if "компания" in h[0] and "зона" in h[1] and "новость" in h[3]:
-            return (0.18, 0.14, 0.14, 0.42, 0.12)
+            return _TABLE3_COL_WIDTHS
 
     return None
+
+
+def _fixed_table_col_widths(headers: list[str]) -> tuple[float, ...] | None:
+    """Жёсткие профили ширин для таблиц §1–§4 (приоритет над _match_column_fractions)."""
+    if _is_top_market_news_table(headers):
+        return _TABLE1_COL_WIDTHS
+    if _is_portfolio_companies_news_table(headers):
+        return _TABLE3_COL_WIDTHS
+    h = [x.lower().strip() for x in headers]
+    if len(headers) == 4 and h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] == "рейтинг":
+        return _TABLE2_COL_WIDTHS
+    if (
+        len(headers) == 5
+        and h[0] == "время"
+        and h[1] == "событие"
+        and h[2] == "тип"
+        and "важность" in h[3]
+    ):
+        return _TABLE4_COL_WIDTHS
+    return None
+
+
+def _col_width_percents(col_widths: tuple[float, ...]) -> tuple[float, ...]:
+    total = sum(col_widths)
+    if total <= 0:
+        return col_widths
+    return tuple(100.0 * w / total for w in col_widths)
 
 
 def _is_top_market_news_table(headers: list[str]) -> bool:
@@ -1030,9 +1063,16 @@ class _ReportPDF(FPDF):
         ncols = len(table.headers)
         font_size = _table_font_size(ncols)
         header_font_size = _table_header_font_size(font_size)
-        preset = _match_column_fractions(table.headers)
+        preset = _fixed_table_col_widths(table.headers) or _match_column_fractions(
+            table.headers
+        )
         if preset:
             col_widths = preset
+            logger.debug(
+                "Ширины колонок %s: %s",
+                table.headers,
+                tuple(round(p, 1) for p in _col_width_percents(col_widths)),
+            )
             if any(_column_kind(h) == "importance" for h in table.headers):
                 col_widths = _ensure_importance_col_width(
                     self, table.headers, col_widths, font_size=font_size
