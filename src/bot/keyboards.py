@@ -1,6 +1,6 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-MANUAL_REPORT_BUTTON = "📊 Брифинг вне расписания"
+MANUAL_REPORT_BUTTON = "Daily briefing"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
