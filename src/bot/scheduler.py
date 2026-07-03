@@ -1,6 +1,4 @@
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -8,16 +6,6 @@ from apscheduler.triggers.cron import CronTrigger
 from src.config import Settings
 
 logger = logging.getLogger(__name__)
-
-
-def is_manual_report_allowed(settings: Settings, now: datetime | None = None) -> bool:
-    """Ручной брифинг: внеурочное время (вечер будней, выходные, до утреннего автоотчёта)."""
-    tz = ZoneInfo(settings.timezone)
-    now = now or datetime.now(tz)
-    if now.weekday() >= 5:
-        return True
-    hour = now.hour
-    return hour >= settings.off_hours_weekday_start or hour < settings.off_hours_weekday_end
 
 
 def setup_scheduler(

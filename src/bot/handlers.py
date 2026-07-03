@@ -6,7 +6,6 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
 from src.bot.keyboards import MANUAL_REPORT_BUTTON, main_keyboard
-from src.bot.scheduler import is_manual_report_allowed
 from src.config import Settings, load_yaml_config
 from src.report.generator import ReportGenerationError
 from src.report.storage import ReportResult, SavedReport, persist_report_result
@@ -113,16 +112,6 @@ async def send_briefing_to_chat(bot: Bot, settings: Settings, saved: SavedReport
 
 
 async def run_manual_briefing(message: Message, service: BriefingService, settings: Settings) -> None:
-    if not is_manual_report_allowed(settings):
-        await message.answer(
-            "Сейчас рабочее время. Ручной брифинг доступен во внеурочное "
-            f"(будни с {settings.off_hours_weekday_start:02d}:00 и выходные).\n"
-            f"Автоотчёт приходит ежедневно в "
-            f"{settings.daily_briefing_hour:02d}:{settings.daily_briefing_minute:02d}.\n"
-            "Используйте /status для проверки режима."
-        )
-        return
-
     if service.is_running:
         await message.answer("Сервис уже собирает данные, подождите...")
         return
@@ -146,7 +135,7 @@ def create_bot_handlers(service: BriefingService, settings: Settings) -> Router:
             "ETF Daily Briefing\n\n"
             "Ежедневный торговый брифинг: новости вчера + календарь сегодня.\n\n"
             "Команды:\n"
-            "/report — брифинг вне расписания (кнопка ниже)\n"
+            "/report — брифинг по запросу (кнопка ниже)\n"
             "/status — режим работы\n"
             "/portfolio — краткая сводка портфеля\n\n"
             f"Автоотчёт: каждый день в "
@@ -157,17 +146,13 @@ def create_bot_handlers(service: BriefingService, settings: Settings) -> Router:
 
     @router.message(Command("status"))
     async def cmd_status(message: Message) -> None:
-        allowed = is_manual_report_allowed(settings)
-        mode = "внеурочное (ручной запуск доступен)" if allowed else "рабочее"
         running = "выполняется" if service.is_running else "ожидание"
         await message.answer(
-            f"Режим: {mode}\n"
             f"Сервис: {running}\n"
             f"Часовой пояс: {settings.timezone}\n"
             f"Автоотчёт: {settings.daily_briefing_hour:02d}:"
             f"{settings.daily_briefing_minute:02d}\n"
-            f"Внеурочное: будни с {settings.off_hours_weekday_start:02d}:00 "
-            f"и до {settings.off_hours_weekday_end:02d}:00, выходные"
+            "Ручной запуск: в любое время (/report или кнопка)"
         )
 
     @router.message(Command("portfolio"))
