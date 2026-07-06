@@ -66,9 +66,16 @@ async def send_briefing_to_chat(
     )
 
 
+BRIEFING_STARTED_MESSAGE = "Генерация брифинга запущена. PDF придёт в этот чат."
+BRIEFING_ALREADY_RUNNING_MESSAGE = "Сервис уже выполняется. Дождитесь завершения."
+
+
 async def run_manual_briefing(message: Message, service: BriefingService, settings: Settings) -> None:
     if service.is_running:
+        await message.answer(BRIEFING_ALREADY_RUNNING_MESSAGE)
         return
+
+    await message.answer(BRIEFING_STARTED_MESSAGE)
 
     try:
         saved = await service.execute()
