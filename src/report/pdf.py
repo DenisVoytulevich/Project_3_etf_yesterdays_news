@@ -489,6 +489,8 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
     if n == 5:
         if h[0] == "#" and "событие" in h[1] and h[2] in {"сила", "влияние", "сила события"}:
             return _TABLE1_COL_WIDTHS
+        if "событие" in h[0] and h[1] in {"сила события", "влияние"}:
+            return _TABLE1_COL_WIDTHS
         if "isin" in h[0] and "название" in h[1] and "кол-во" in h[2] and "стоимость" in h[3]:
             # ISIN +30% за счёт «Кол-во», «Стоимость EUR», «Доля %»
             return (0.19, 0.40, 0.13, 0.14, 0.14)
@@ -537,15 +539,20 @@ def _col_width_percents(col_widths: tuple[float, ...]) -> tuple[float, ...]:
     return tuple(100.0 * w / total for w in col_widths)
 
 
+def _is_sector_or_industry_header(header: str) -> bool:
+    h = header.lower().strip()
+    return "сектор" in h or "отрасль" in h or h in {"industry", "sector"}
+
+
 def _is_top_market_news_table(headers: list[str]) -> bool:
-    """§1 — топ новости: # | Событие | Сила | Сектор | Драйвер."""
+    """§1 — топ новости: # | Событие | Сила/Влияние | Сектор/Отрасль | Драйвер."""
     if len(headers) == 5:
         h = [x.lower().strip() for x in headers]
         return (
             h[0] == "#"
             and "событие" in h[1]
             and h[2] in {"сила", "влияние", "сила события"}
-            and "сектор" in h[3]
+            and _is_sector_or_industry_header(headers[3])
             and "драйвер" in h[4]
         )
     if len(headers) != 4:
@@ -553,7 +560,12 @@ def _is_top_market_news_table(headers: list[str]) -> bool:
     h = [x.lower().strip() for x in headers]
     impact_col = h[1] in {"сила события", "влияние", "сила"}
     driver_col = "драйвер" in h[3] or ("влияние" in h[3] and "драйвер" in h[3])
-    return "событие" in h[0] and impact_col and "сектор" in h[2] and driver_col
+    return (
+        "событие" in h[0]
+        and impact_col
+        and _is_sector_or_industry_header(headers[2])
+        and driver_col
+    )
 
 
 def _top_news_event_col_index(headers: list[str]) -> int:
@@ -696,7 +708,7 @@ def _top_news_driver_col_index(headers: list[str]) -> int | None:
 
 def _top_news_sector_col_index(headers: list[str]) -> int | None:
     for j, header in enumerate(headers):
-        if "сектор" in header.lower():
+        if _is_sector_or_industry_header(header):
             return j
     return None
 

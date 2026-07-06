@@ -70,7 +70,29 @@ def test_sector_ratings_impact_header_fits_at_uniform_size():
     needed = pdf.get_string_width("Влияние") + 5.0
     assert aligned[impact_j] * pdf.epw >= needed - 0.1
 
-def test_insurance_losses_rising_is_negative():
+def test_top_market_news_table_detects_otrasl_column():
+    from src.report.pdf import (
+        MdTable,
+        _is_top_market_news_table,
+        _prepare_top_market_news_table,
+        _top_news_event_groups,
+        _top_news_merge_col_indices,
+    )
+
+    headers = ["#", "Событие", "Влияние", "Отрасль", "Драйвер сектора"]
+    assert _is_top_market_news_table(headers)
+    assert _top_news_merge_col_indices(headers) == (0, 1, 2)
+
+    rows = [
+        ["1", "OPEC+ одобрила рост добычи", "-3", "Energy", "Предложение нефти: рост"],
+        ["1", "OPEC+ одобрила рост добычи", "-3", "Industry", "Цена нефти: снижение"],
+        ["2", "easyJet сделка", "+2", "Airlines", "Топливо: снижение"],
+    ]
+    prepared = _prepare_top_market_news_table(MdTable(headers=headers, rows=rows))
+    groups = _top_news_event_groups(prepared.rows, event_col=1)
+    assert any(span > 1 for _, span in groups)
+
+
     sentiment = _driver_influence_sentiment("Страховые убытки: рост")
     assert sentiment == "negative"
 
