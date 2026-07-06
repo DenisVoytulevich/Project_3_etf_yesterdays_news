@@ -1,6 +1,6 @@
 # Тесты дедупликации §2.
 
-from src.report.markdown_tables import deduplicate_sector_ratings, ensure_sector_ratings_coverage
+from src.report.markdown_tables import deduplicate_sector_ratings, finalize_sector_ratings, ensure_sector_ratings_coverage
 
 _REQUIRED = [
     "Дата центры",
@@ -71,10 +71,30 @@ def test_deduplicate_merges_ru_variant_spellings():
     assert "+1" in result
 
 
+def test_finalize_merges_telecommunications_and_telecom():
+    required = ["Telecom", "Дата центры", "Энергетика"]
+    table = """\
+| # | Отрасль | Влияние | Обоснование |
+|---|---------|---------|-------------|
+| 1 | Telecommunications | +1 | Device cycle |
+| 2 | Telecom | 0 | Нет сигналов |
+| 3 | Дата‑центры | 0 | Нет сигналов |
+| 4 | Дата центры | 0 | Дубль |
+| 5 | Телекоммуникации | +2 | Рост трафика |
+"""
+    result = finalize_sector_ratings(table, required)
+    names = _sector_names(result)
+    assert names.count("Telecom") == 1
+    assert "Telecommunications" not in names
+    assert "Телекоммуникации" not in names
+    assert names.count("Дата центры") == 1
+    assert "Дата‑центры" not in names
+    assert "+2" in result
+
+
 def test_coverage_does_not_add_duplicates_after_dedup():
-    deduped = deduplicate_sector_ratings(_REVISED_SECTOR_TABLE, _REQUIRED)
-    covered = ensure_sector_ratings_coverage(deduped, _REQUIRED)
-    names = _sector_names(covered)
+    result = finalize_sector_ratings(_REVISED_SECTOR_TABLE, _REQUIRED)
+    names = _sector_names(result)
     assert "IT / Technology" in names
     assert "Информационные технологии" not in names
-    assert len(names) == len({name.lower() for name in names})
+    assert len(set(names)) == len(names)

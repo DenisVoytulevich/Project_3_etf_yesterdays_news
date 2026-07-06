@@ -117,12 +117,21 @@ _DRIVER_COST_MARKERS: tuple[str, ...] = (
     "стоимость капитал",
     "логистик",
     "расход",
+    "fuel",
+    "logistic",
+    "cost",
+    "expense",
+    "capex",
 )
 # Рост предложения / добычи — негатив для производителей сырья.
 _DRIVER_SUPPLY_MARKERS: tuple[str, ...] = (
     "предложен",
     "добыч",
     "поставк",
+    "supply",
+    "output",
+    "export capacity",
+    "production",
 )
 # Драйверы, где рост — позитив (спрос, маржа, приток и т.п.).
 _DRIVER_GROWTH_POSITIVE_MARKERS: tuple[str, ...] = (
@@ -135,12 +144,30 @@ _DRIVER_GROWTH_POSITIVE_MARKERS: tuple[str, ...] = (
     "производств",
     "марж",
     "ликвидност",
+    "demand",
+    "revenue",
+    "order",
+    "backlog",
+    "utilization",
+    "inflow",
+    "valuation",
+    "pipeline",
+    "premia",
+    "premium",
+    "pricing",
+    "upgrade",
+    "cycle",
+    "capabilit",
 )
 # Цена реализуемого сырья / продукта.
 _DRIVER_COMMODITY_PRICE_MARKERS: tuple[str, ...] = (
     "цена нефт",
     "цены на нефт",
     "цены на сырь",
+    "oil price",
+    "crude",
+    "commodity price",
+    "brent",
 )
 # Рост этих драйверов — негатив для сектора (убытки, выплаты, резервы).
 _DRIVER_NEGATIVE_WHEN_RISING: tuple[str, ...] = (
@@ -152,6 +179,8 @@ _DRIVER_NEGATIVE_WHEN_RISING: tuple[str, ...] = (
     "loss",
     "задерж",
     "простой",
+    "delay",
+    "downtime",
 )
 # Маркеры влияния новости на котировку (§3).
 _COMPANY_NEWS_POSITIVE_MARKERS: tuple[tuple[str, int], ...] = (
@@ -771,7 +800,7 @@ def _row_cell_style(
 
 
 def _driver_change_direction(change: str) -> tuple[bool, bool]:
-    """Направление изменения драйвера: (рост, снижение)."""
+    """Направление изменения драйвера: (рост, снижение). RU + EN."""
     is_rise = any(
         marker in change
         for marker in (
@@ -782,6 +811,23 @@ def _driver_change_direction(change: str) -> tuple[bool, bool]:
             "расшир",
             "увелич",
             "нараст",
+            "rise",
+            "rising",
+            "higher",
+            "increase",
+            "increasing",
+            "growth",
+            "growing",
+            "expand",
+            "expanding",
+            "expansion",
+            "accelerat",
+            "stronger",
+            "strength",
+            "improv",
+            "emerging",
+            "upbeat",
+            "bullish",
         )
     )
     is_fall = any(
@@ -796,16 +842,34 @@ def _driver_change_direction(change: str) -> tuple[bool, bool]:
             "сокращ",
             "уменьш",
             "сжат",
+            "lower",
+            "fall",
+            "falling",
+            "declin",
+            "decrease",
+            "decreasing",
+            "drop",
+            "dropping",
+            "reduce",
+            "reduction",
+            "contract",
+            "weaker",
+            "weakness",
+            "bearish",
+            "pressure down",
+            "downward",
         )
     )
     if "давлен" in change and "вниз" in change:
+        is_fall = True
+    if "moderately negative" in change or "negative for oil" in change:
         is_fall = True
     return is_rise, is_fall
 
 
 def _driver_cost_context(driver: str, change: str) -> bool:
     return any(marker in driver for marker in _DRIVER_COST_MARKERS) or any(
-        marker in change for marker in ("издерж", "затрат", "расход")
+        marker in change for marker in ("издерж", "затрат", "расход", "cost", "expense")
     )
 
 
@@ -822,16 +886,25 @@ def _driver_clause_sentiment(clause: str) -> str | None:
     else:
         driver, change = text, ""
 
-    if "стабильн" in change:
+    if "стабильн" in change or "stable" in change or "steady" in change or "unchanged" in change:
         return "neutral"
-    if "неопредел" in change:
+    if "неопредел" in change or "uncertain" in change:
         return "negative"
-    if "расширение марж" in change:
+    if "cautious" in change and "improv" not in change:
+        return "negative"
+    if "расширение марж" in change or "margin expansion" in change:
         return "positive"
-    if "сжатие марж" in change:
+    if "сжатие марж" in change or "margin compression" in change or "margin squeeze" in change:
         return "negative"
     is_rise, is_fall = _driver_change_direction(change)
-    if is_fall and ("поддерживает спрос" in change or "поддержка спрос" in change):
+    if is_fall and (
+        "поддерживает спрос" in change
+        or "поддержка спрос" in change
+        or "supports demand" in change
+        or "support demand" in change
+    ):
+        return "positive"
+    if "valuation support" in change or "optionality" in change:
         return "positive"
     if not is_rise and not is_fall:
         return None
@@ -844,8 +917,10 @@ def _driver_clause_sentiment(clause: str) -> str | None:
         return "negative" if is_rise else "positive"
     if "доходность альтернатив" in driver:
         return "negative" if is_rise else "positive"
-    if "риск" in driver or "тариф" in driver:
+    if "риск" in driver or "тариф" in driver or "risk" in driver or "tariff" in driver:
         return "negative" if is_rise else "positive"
+    if "defense" in driver or "оборон" in driver:
+        return "positive" if is_rise else "negative"
     if any(marker in driver for marker in _DRIVER_COMMODITY_PRICE_MARKERS):
         return "positive" if is_rise else "negative"
     if "конкурентоспособност" in driver:

@@ -10,6 +10,7 @@ from src.config import Settings, load_yaml_config
 from src.pipeline.models import (
     BRIEFING_SECTION_KEYS,
     BriefingDraft,
+    FocusContext,
     QARemarks,
 )
 from src.pipeline.stages.qa_editor import format_remarks_for_prompt
@@ -22,6 +23,7 @@ async def run_revision_agent(
     draft: BriefingDraft,
     editor_qa: QARemarks,
     analytics_qa: QARemarks,
+    focus: FocusContext,
     settings: Settings,
 ) -> BriefingDraft:
     approved_count = sum(
@@ -39,6 +41,7 @@ async def run_revision_agent(
     system_prompt = load_agent_prompt("revision_agent")
     user_prompt = render_agent_prompt(
         "revision_agent",
+        interest_sectors_context=focus.interest_sectors_context,
         editor_remarks_context=format_remarks_for_prompt(editor_qa),
         analytics_remarks_context=format_remarks_for_prompt(analytics_qa),
         **draft.sections,

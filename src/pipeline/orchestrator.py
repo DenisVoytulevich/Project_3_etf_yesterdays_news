@@ -83,13 +83,13 @@ async def run_multi_agent_pipeline(
         draft = await run_analyst(normalized, news, focus, settings)
         _save_checkpoint(run_id, "04_draft", draft)
 
-        editor_qa = await run_qa_editor(draft, settings)
+        editor_qa = await run_qa_editor(draft, focus, settings)
         _save_checkpoint(run_id, "05_qa_editor", editor_qa)
 
         analytics_qa = await run_qa_analytics(draft, normalized, news, focus, settings)
         _save_checkpoint(run_id, "06_qa_analytics", analytics_qa)
 
-        revised = await run_revision_agent(draft, editor_qa, analytics_qa, settings)
+        revised = await run_revision_agent(draft, editor_qa, analytics_qa, focus, settings)
         _save_checkpoint(run_id, "07_revised", revised)
 
         validated = run_consistency_validator(revised, focus)
@@ -117,9 +117,9 @@ async def run_multi_agent_pipeline_with_artifacts(
     extracted = await run_entity_extractor(news, focus, settings)
     normalized = await run_theme_normalizer(extracted, focus, settings)
     draft = await run_analyst(normalized, news, focus, settings)
-    editor_qa = await run_qa_editor(draft, settings)
+    editor_qa = await run_qa_editor(draft, focus, settings)
     analytics_qa = await run_qa_analytics(draft, normalized, news, focus, settings)
-    revised = await run_revision_agent(draft, editor_qa, analytics_qa, settings)
+    revised = await run_revision_agent(draft, editor_qa, analytics_qa, focus, settings)
     validated = run_consistency_validator(revised, focus)
     result = run_renderer(validated, news, focus, settings)
     artifacts = PipelineArtifacts(

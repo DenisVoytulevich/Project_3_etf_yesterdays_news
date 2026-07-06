@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 
+from src.companies.context import TrackedCompany, build_company_lookup, company_identity_key
 from src.pipeline.models import BRIEFING_SECTION_KEYS
 from src.report.impact_scale import parse_impact_score
 from src.structure.labels import canonical_sector_name, sector_matches
@@ -125,6 +126,40 @@ def deduplicate_sector_ratings(
     return _rebuild_sector_table(prefix, header, kept)
 
 
+def _canonicalize_sector_table_names(
+    sector_ratings: str,
+    required_sectors: list[str],
+) -> str:
+    """Привести все названия в §2 к словарю портфеля."""
+    prefix, rows = parse_markdown_table_rows(sector_ratings)
+    if len(rows) < 2:
+        return sector_ratings
+
+    header = rows[0]
+    data_rows: list[list[str]] = []
+    for cells in rows[1:]:
+        row = list(cells)
+        if len(row) >= 2 and row[1].strip().lower() != "отрасль":
+            row[1] = canonical_sector_name(row[1], required_sectors)
+        data_rows.append(row)
+    return _rebuild_sector_table(prefix, header, data_rows)
+
+
+def finalize_sector_ratings(
+    sector_ratings: str,
+    required_sectors: list[str],
+) -> str:
+    """Дедупликация, канонизация имён и покрытие обязательных отраслей."""
+    if not required_sectors:
+        return sector_ratings or ""
+
+    text = deduplicate_sector_ratings(sector_ratings or "", required_sectors)
+    text = _canonicalize_sector_table_names(text, required_sectors)
+    text = ensure_sector_ratings_coverage(text, required_sectors)
+    text = deduplicate_sector_ratings(text, required_sectors)
+    return _canonicalize_sector_table_names(text, required_sectors)
+
+
 def ensure_sector_ratings_coverage(
     sector_ratings: str,
     required_sectors: list[str],
@@ -172,3 +207,97 @@ def ensure_sector_ratings_coverage(
     )
 
     return _rebuild_sector_table(prefix, header, data_rows + appended_rows)
+
+
+_PORTFOLIO_PLACEHOLDER = "значимых новостей по компаниям списка не выявлено"
+_ZONE_RANK = {"портфель": 0, "наблюдение": 1, "watchlist": 1}
+
+
+def _is_portfolio_placeholder_row(cells: list[str]) -> bool:
+    return len(cells) >= 4 and _PORTFOLIO_PLACEHOLDER in cells[3].lower()
+
+
+def _merge_portfolio_company_rows(
+    existing: list[str],
+    incoming: list[str],
+) -> list[str]:
+    """Слить две строки §3 по одной компании."""
+    merged = list(existing)
+    if len(incoming) < 5:
+        return merged
+
+    incoming_zone = incoming[1].strip().lower()
+    existing_zone = merged[1].strip().lower()
+    if _ZONE_RANK.get(incoming_zone, 9) < _ZONE_RANK.get(existing_zone, 9):
+        merged[1] = incoming[1].strip()
+
+    existing_impact = parse_impact_score(merged[4]) or 0
+    incoming_impact = parse_impact_score(incoming[4]) or 0
+    incoming_news = incoming[3].strip()
+    existing_news = merged[3].strip()
+
+    if abs(incoming_impact) > abs(existing_impact):
+        merged[3] = incoming_news
+        merged[4] = incoming[4].strip()
+    elif (
+        abs(incoming_impact) == abs(existing_impact)
+        and incoming_impact < existing_impact
+    ):
+        merged[3] = incoming_news
+        merged[4] = incoming[4].strip()
+    elif incoming_news and incoming_news not in existing_news:
+        merged[3] = f"{existing_news}; {incoming_news}" if existing_news else incoming_news
+
+    return merged
+
+
+def finalize_portfolio_companies_news(
+    section: str,
+    *,
+    required_sectors: list[str],
+    tracked_companies: list[TrackedCompany],
+) -> str:
+    """§3: одна строка на компанию, имена и отрасли из списка портфеля."""
+    prefix, rows = parse_markdown_table_rows(section)
+    if len(rows) < 2:
+        return section
+
+    header = rows[0]
+    data_rows = rows[1:]
+    if any(_is_portfolio_placeholder_row(cells) for cells in data_rows):
+        return section
+
+    lookup = build_company_lookup(tracked_companies)
+    merged_rows: list[list[str]] = []
+    index_by_key: dict[str, int] = {}
+
+    for cells in data_rows:
+        if len(cells) < 5 or cells[0].strip() in {"—", ""}:
+            continue
+
+        row = list(cells)
+        key = company_identity_key(row[0])
+        tracked = lookup.get(key)
+        if tracked:
+            row[0] = tracked.name
+            row[1] = tracked.zone
+            row[2] = canonical_sector_name(tracked.sector, required_sectors)
+        else:
+            row[2] = canonical_sector_name(row[2], required_sectors)
+
+        if key not in index_by_key:
+            index_by_key[key] = len(merged_rows)
+            merged_rows.append(row)
+            continue
+
+        existing_index = index_by_key[key]
+        merged_rows[existing_index] = _merge_portfolio_company_rows(
+            merged_rows[existing_index],
+            row,
+        )
+
+    removed = len(data_rows) - len(merged_rows)
+    if removed > 0:
+        logger.warning("§3: удалены дубли компаний (%d строк)", removed)
+
+    return _rebuild_sector_table(prefix, header, merged_rows)

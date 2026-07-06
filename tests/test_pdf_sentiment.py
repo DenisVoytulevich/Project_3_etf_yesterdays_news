@@ -129,3 +129,39 @@ def test_combined_energy_drivers_stay_negative():
         "Предложение нефти: рост; Brent: давление вниз"
     )
     assert sentiment == "negative"
+
+
+def test_top_news_cell_sentiment_splits_event_and_driver_colors():
+    from src.report.pdf import _top_news_cell_sentiment
+
+    headers = ["#", "Событие", "Влияние", "Сектор", "Драйвер сектора"]
+    row = ["1", "OPEC+", "+2", "Energy", "Oil supply: growth"]
+    event_sentiment = "positive"
+    assert _top_news_cell_sentiment(headers, row, 2, event_sentiment) == "positive"
+    assert _top_news_cell_sentiment(headers, row, 3, event_sentiment) == "negative"
+    assert _top_news_cell_sentiment(headers, row, 4, event_sentiment) == "negative"
+
+
+def test_english_product_cycle_accelerated_is_positive():
+    assert _driver_influence_sentiment("Product cycle: accelerated") == "positive"
+
+
+def test_english_fuel_lower_is_positive_for_sector():
+    assert _driver_influence_sentiment("Fuel: lower") == "positive"
+
+
+def test_english_export_capacity_expanding_negative_for_energy():
+    assert _driver_influence_sentiment("Export capacity plans: expanding") == "negative"
+
+
+def test_english_contract_pipeline_stronger_is_positive():
+    assert _driver_influence_sentiment("Contract pipeline: stronger") == "positive"
+
+
+def test_english_cautiously_improving_is_positive():
+    assert (
+        _driver_influence_sentiment(
+            "EPC demand outlook: cautiously improving (study phase)"
+        )
+        == "positive"
+    )

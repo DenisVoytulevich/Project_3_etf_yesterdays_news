@@ -4,13 +4,7 @@ from __future__ import annotations
 
 from src.data.models import PortfolioAnalytics
 from src.structure.aggregation import StructureAnalysis
-from src.structure.labels import (
-    infer_etf_theme_sectors,
-    preferred_sector_display_name,
-    sector_identity_key,
-    sector_label,
-    sector_matches,
-)
+from src.structure.labels import infer_etf_theme_sectors, normalize_required_sectors, preferred_sector_display_name, sector_identity_key, sector_label, sector_matches
 
 
 def _sector_already_listed(sectors: list[str], name: str) -> bool:
@@ -101,7 +95,7 @@ def collect_screening_sectors(
         for holding in structure.watchlist_tracking_holdings:
             _add_sector(sectors, seen, holding.sector)
 
-    return sectors
+    return normalize_required_sectors(sectors)
 
 
 def format_interest_sectors_for_prompt(

@@ -6,6 +6,9 @@ import re
 
 SECTOR_LABELS: dict[str, str] = {
     "Technology": "IT / Technology",
+    "Semiconductors": "IT / Technology",
+    "Consumer Electronics": "Consumer Discretionary",
+    "E-commerce": "Consumer Discretionary",
     "Information Technology": "IT / Technology",
     "Financials": "Финансы",
     "Financial Services": "Финансы",
@@ -14,6 +17,7 @@ SECTOR_LABELS: dict[str, str] = {
     "Consumer Cyclical": "Consumer Discretionary",
     "Consumer Discretionary": "Consumer Discretionary",
     "Communication Services": "Telecom",
+    "Telecommunications": "Telecom",
     "Energy": "Энергетика",
     "Healthcare": "Здравоохранение",
     "Consumer Defensive": "Consumer Staples",
@@ -31,6 +35,9 @@ SECTOR_LABELS: dict[str, str] = {
 SECTOR_TYPO_FIXES: dict[str, str] = {
     "отросль ядерной энергетики": "Ядерная энергетика",
     "отрасль ядерной энергетики": "Ядерная энергетика",
+    "дата‑центры": "Дата центры",
+    "дата-центры": "Дата центры",
+    "дата центры": "Дата центры",
 }
 
 # Синонимы отраслей для сопоставления (нижний регистр).
@@ -50,6 +57,7 @@ SECTOR_ALIASES: dict[str, list[str]] = {
         "information technology",
         "tech",
         "semiconductor",
+        "semiconductors",
         "информационные технологии",
         "ит и технологии",
         "технологии",
@@ -58,7 +66,13 @@ SECTOR_ALIASES: dict[str, list[str]] = {
     "энергетика": ["energy", "oil", "gas"],
     "здравоохранение": ["health", "healthcare"],
     "недвижимость": ["real estate", "reit"],
-    "телеком": ["telecom", "communication", "телекоммуникации", "communication services"],
+    "телеком": [
+        "telecom",
+        "telecommunications",
+        "communication",
+        "телекоммуникации",
+        "communication services",
+    ],
     "consumer discretionary": [
         "consumer cyclical",
         "потребительский сектор",
@@ -289,6 +303,19 @@ def sector_aliases(sector: str) -> list[str]:
             _add(mapped)
 
     return aliases
+
+
+def normalize_required_sectors(sectors: list[str]) -> list[str]:
+    """Единый список обязательных отраслей без дублей и опечаток."""
+    normalized: list[str] = []
+    for raw in sectors:
+        name = preferred_sector_display_name(raw)
+        if not name or name == "—":
+            continue
+        if any(sector_matches(existing, name) for existing in normalized):
+            continue
+        normalized.append(name)
+    return normalized
 
 
 def sector_identity_key(sector: str) -> str:

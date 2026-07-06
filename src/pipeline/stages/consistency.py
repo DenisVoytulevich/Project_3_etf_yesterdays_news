@@ -13,12 +13,13 @@ from src.pipeline.models import (
     ValidatedBriefing,
 )
 from src.report.impact_scale import IMPACT_MAX, IMPACT_MIN, is_valid_impact_score, parse_impact_score
+from src.companies.context import build_unified_company_list, company_identity_key
 from src.report.markdown_tables import (
-    deduplicate_sector_ratings,
-    ensure_sector_ratings_coverage,
+    finalize_portfolio_companies_news,
+    finalize_sector_ratings,
     parse_markdown_table_rows,
 )
-from src.structure.labels import sector_matches
+from src.structure.labels import normalize_required_sectors, sector_matches
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ def _check_portfolio_companies(
 
     placeholder = "значимых новостей по компаниям списка не выявлено"
     data_rows = rows[1:]
-    seen_companies: set[str] = set()
+    seen_company_keys: set[str] = set()
 
     for cells in data_rows:
         if len(cells) < 5:
@@ -208,8 +209,8 @@ def _check_portfolio_companies(
         if company in {"—", ""}:
             continue
 
-        norm_company = company.lower()
-        if norm_company in seen_companies:
+        company_key = company_identity_key(company)
+        if company_key in seen_company_keys:
             issues.append(
                 ConsistencyIssue(
                     code="duplicate_company",
@@ -217,7 +218,7 @@ def _check_portfolio_companies(
                     section="portfolio_companies_news",
                 )
             )
-        seen_companies.add(norm_company)
+        seen_company_keys.add(company_key)
 
         if not sector or sector == "—":
             issues.append(
@@ -290,12 +291,18 @@ def run_consistency_validator(
 ) -> ValidatedBriefing:
     min_score, max_score = _impact_range()
 
+    required_sectors = normalize_required_sectors(focus.screening_sectors)
+
     sections = dict(draft.sections)
-    sector_raw = sections.get("sector_ratings", "")
-    sector_deduped = deduplicate_sector_ratings(sector_raw, focus.screening_sectors)
-    sections["sector_ratings"] = ensure_sector_ratings_coverage(
-        sector_deduped,
-        focus.screening_sectors,
+    sections["sector_ratings"] = finalize_sector_ratings(
+        sections.get("sector_ratings", ""),
+        required_sectors,
+    )
+    tracked_companies = build_unified_company_list(focus.structure)
+    sections["portfolio_companies_news"] = finalize_portfolio_companies_news(
+        sections.get("portfolio_companies_news", ""),
+        required_sectors=required_sectors,
+        tracked_companies=tracked_companies,
     )
 
     issues: list[ConsistencyIssue] = []
@@ -312,7 +319,7 @@ def run_consistency_validator(
             sections.get("sector_ratings", ""),
             min_score=min_score,
             max_score=max_score,
-            required_sectors=focus.screening_sectors,
+            required_sectors=required_sectors,
         )
     )
     issues.extend(

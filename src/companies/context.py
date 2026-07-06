@@ -47,6 +47,24 @@ class CompanySearchTerm:
     company: TrackedCompany
 
 
+def company_identity_key(name: str) -> str:
+    """Ключ для дедупликации компаний (NVIDIA / NVIDIA Corporation → одно)."""
+    return _normalize_company_name(name)
+
+
+def build_company_lookup(
+    companies: list[TrackedCompany],
+) -> dict[str, TrackedCompany]:
+    """Словарь компаний по нормализованному имени; портфель важнее watchlist."""
+    lookup: dict[str, TrackedCompany] = {}
+    for company in reversed(companies):
+        key = company_identity_key(company.name)
+        if not key:
+            continue
+        lookup[key] = company
+    return lookup
+
+
 def _normalize_company_name(name: str) -> str:
     cleaned = name.strip().lower()
     for suffix in (

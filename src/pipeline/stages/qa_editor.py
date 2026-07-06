@@ -7,7 +7,7 @@ import logging
 from src.agents.base import call_json_agent
 from src.agents.runner import load_agent_prompt, render_agent_prompt
 from src.config import Settings, load_yaml_config
-from src.pipeline.models import BriefingDraft, QARemark, QARemarks
+from src.pipeline.models import BriefingDraft, FocusContext, QARemark, QARemarks
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ def format_remarks_for_prompt(remarks: QARemarks) -> str:
 
 async def run_qa_editor(
     draft: BriefingDraft,
+    focus: FocusContext,
     settings: Settings,
 ) -> QARemarks:
     yaml_cfg = load_yaml_config()
@@ -51,6 +52,7 @@ async def run_qa_editor(
     system_prompt = load_agent_prompt("qa_editor")
     user_prompt = render_agent_prompt(
         "qa_editor",
+        interest_sectors_context=focus.interest_sectors_context,
         **draft.sections,
     )
 
