@@ -57,6 +57,8 @@ def _filter_by_time(
     tz_name: str,
     lookback_hours: int,
 ) -> tuple[list[NewsItem], int]:
+    tz = ZoneInfo(tz_name)
+    yesterday = (datetime.now(tz) - timedelta(days=1)).date()
     start_utc, end_utc = _yesterday_window(tz_name)
     lookback_start = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     window_start = min(start_utc, lookback_start)
@@ -70,7 +72,8 @@ def _filter_by_time(
             continue
         if published.tzinfo is None:
             published = published.replace(tzinfo=timezone.utc)
-        if window_start <= published < end_utc:
+        pub_local_date = published.astimezone(tz).date()
+        if pub_local_date == yesterday or window_start <= published < end_utc:
             kept.append(item)
         else:
             removed += 1
@@ -111,6 +114,17 @@ async def run_news_collector(
         dup_removed,
         time_removed,
     )
+    if len(filtered) < 8 and not settings.newsapi_key:
+        logger.error(
+            "Мало новостей (%d): задайте NEWSAPI_KEY в .env на сервере — "
+            "без него остаются только RSS-материалы за вчера",
+            len(filtered),
+        )
+    elif len(filtered) < 8:
+        logger.warning(
+            "Мало новостей после фильтра (%d) — проверьте NewsAPI и RSS",
+            len(filtered),
+        )
     return NewsBatch(
         items=filtered,
         removed_duplicates=dup_removed,

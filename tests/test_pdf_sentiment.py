@@ -6,9 +6,12 @@ from src.report.pdf import (
     _find_fonts,
     _fixed_table_col_widths,
     _reference_impact_col_fraction,
+    _REF_TABLE_BODY_FONT_SIZE,
+    _REF_TABLE_HEADER_FONT_SIZE,
     _table_font_size,
     _table_header_font_size,
     _table_impact_col_index,
+    _uniform_table_header_font_size,
     _driver_influence_sentiment,
     FONT_REGULAR,
 )
@@ -25,11 +28,18 @@ def _pdf_with_fonts() -> _ReportPDF:
     return pdf
 
 
+def test_uniform_table_header_font_size():
+    assert _uniform_table_header_font_size() == _REF_TABLE_HEADER_FONT_SIZE
+    assert _uniform_table_header_font_size() == _table_header_font_size(_REF_TABLE_BODY_FONT_SIZE)
+    assert _uniform_table_header_font_size() != _table_header_font_size(_table_font_size(4))
+
+
 def test_impact_col_width_matches_table1_reference():
     pdf = _pdf_with_fonts()
-    body = _table_font_size(5)
-    header = _table_header_font_size(body)
-    ref = _reference_impact_col_fraction(pdf, font_size=body, header_font_size=header)
+    header = _uniform_table_header_font_size()
+    ref = _reference_impact_col_fraction(
+        pdf, font_size=_REF_TABLE_BODY_FONT_SIZE, header_font_size=header
+    )
 
     table_profiles = [
         ["#", "Отрасль", "Влияние", "Обоснование"],
@@ -44,6 +54,21 @@ def test_impact_col_width_matches_table1_reference():
         assert impact_j is not None
         assert abs(aligned[impact_j] - ref) < 0.001
 
+
+def test_sector_ratings_impact_header_fits_at_uniform_size():
+    pdf = _pdf_with_fonts()
+    headers = ["#", "Отрасль", "Влияние", "Обоснование"]
+    header = _uniform_table_header_font_size()
+    ref = _reference_impact_col_fraction(
+        pdf, font_size=_REF_TABLE_BODY_FONT_SIZE, header_font_size=header
+    )
+    preset = _fixed_table_col_widths(headers)
+    assert preset is not None
+    aligned = _apply_reference_impact_col_width(pdf, headers, preset, ref)
+    impact_j = 2
+    pdf.set_font(FONT_REGULAR, "B", header)
+    needed = pdf.get_string_width("Влияние") + 5.0
+    assert aligned[impact_j] * pdf.epw >= needed - 0.1
 
 def test_insurance_losses_rising_is_negative():
     sentiment = _driver_influence_sentiment("Страховые убытки: рост")

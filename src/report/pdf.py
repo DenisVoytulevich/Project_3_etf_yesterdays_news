@@ -92,6 +92,8 @@ _TABLE_HEADER_FILL = (198, 208, 220)
 _TABLE_BODY_ROW_FILL = (248, 250, 252)
 _TABLE_BODY_TEXT_COLOR = (30, 41, 59)
 _TABLE_HEADER_SIZE_BOOST = 1.0
+_REF_TABLE_BODY_FONT_SIZE = 7.5  # эталон §1 (5 колонок)
+_REF_TABLE_HEADER_FONT_SIZE = _REF_TABLE_BODY_FONT_SIZE + _TABLE_HEADER_SIZE_BOOST
 
 # Ширины колонок типовых таблиц (fpdf: веса-пропорции, сумма не обязана быть 1).
 _TABLE1_COL_WIDTHS = (4, 34, 10, 19, 33)  # §1: # | Событие | Влияние | Сектор | Драйвер
@@ -955,6 +957,11 @@ def _table_header_font_size(body_size: float) -> float:
     return body_size + _TABLE_HEADER_SIZE_BOOST
 
 
+def _uniform_table_header_font_size() -> float:
+    """Единый размер заголовков колонок во всех таблицах отчёта."""
+    return _REF_TABLE_HEADER_FONT_SIZE
+
+
 def _header_cell_text(text: str) -> str:
     """Заголовок колонки: короткие подписи без разрыва слов."""
     normalized = " ".join(text.strip().split())
@@ -1245,11 +1252,11 @@ def _reference_impact_col_fraction(
     header_font_size: float | None = None,
 ) -> float:
     """Доля epw для колонки «Влияние» по эталону таблицы §1."""
-    body_size = font_size if font_size is not None else _table_font_size(5)
+    body_size = font_size if font_size is not None else _REF_TABLE_BODY_FONT_SIZE
     header_size = (
         header_font_size
         if header_font_size is not None
-        else _table_header_font_size(body_size)
+        else _uniform_table_header_font_size()
     )
     headers = list(_REF_TABLE_HEADERS)
     col_widths = _TABLE1_COL_WIDTHS
@@ -1437,7 +1444,7 @@ class _ReportPDF(FPDF):
 
         ncols = len(table.headers)
         font_size = _table_font_size(ncols)
-        header_font_size = _table_header_font_size(font_size)
+        header_font_size = _uniform_table_header_font_size()
         preset = _fixed_table_col_widths(table.headers) or _match_column_fractions(
             table.headers
         )
@@ -1513,8 +1520,8 @@ class _ReportPDF(FPDF):
         if _table_impact_col_index(table.headers) is not None:
             ref_impact = _reference_impact_col_fraction(
                 self,
-                font_size=_table_font_size(5),
-                header_font_size=_table_header_font_size(_table_font_size(5)),
+                font_size=_REF_TABLE_BODY_FONT_SIZE,
+                header_font_size=_uniform_table_header_font_size(),
             )
             col_widths = _apply_reference_impact_col_width(
                 self,

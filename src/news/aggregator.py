@@ -230,9 +230,58 @@ def _classify_news(
     return best_priority, matched, sorted(tickers), sorted(sectors)
 
 
-def _fetch_rss(source: dict) -> list[dict[str, Any]]:
+def _yesterday_range_utc(tz_name: str) -> tuple[datetime, datetime]:
+    local = datetime.now(ZoneInfo(tz_name))
+    yesterday = (local - timedelta(days=1)).date()
+    start = datetime(
+        yesterday.year,
+        yesterday.month,
+        yesterday.day,
+        0,
+        0,
+        0,
+        tzinfo=ZoneInfo(tz_name),
+    )
+    end = datetime(
+        yesterday.year,
+        yesterday.month,
+        yesterday.day,
+        23,
+        59,
+        59,
+        tzinfo=ZoneInfo(tz_name),
+    )
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _yesterday_date_iso(tz_name: str) -> str:
+    local = datetime.now(ZoneInfo(tz_name))
+    return (local - timedelta(days=1)).date().isoformat()
+
+
+def _rss_url_for_yesterday(source: dict, tz_name: str) -> str:
+    """Google News RSS: ограничение выдачи датой «вчера» (after:YYYY-MM-DD)."""
+    url = source["url"]
+    if "news.google.com/rss/search" not in url:
+        return url
+    after = f"after:{_yesterday_date_iso(tz_name)}"
+    if after.replace(":", "%3A") in url or after in url:
+        return url
+    if "q=" in url:
+        return re.sub(
+            r"(q=)([^&]+)",
+            lambda m: f"{m.group(1)}{m.group(2)}+{after}",
+            url,
+            count=1,
+        )
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}q={after}"
+
+
+def _fetch_rss(source: dict, *, tz_name: str) -> list[dict[str, Any]]:
+    url = _rss_url_for_yesterday(source, tz_name)
     try:
-        feed = feedparser.parse(source["url"])
+        feed = feedparser.parse(url)
         if feed.bozo and not feed.entries:
             logger.warning("RSS ошибка для %s: %s", source["name"], feed.bozo_exception)
             return []
@@ -342,6 +391,8 @@ async def _fetch_mandatory_sector_news(
     seen_titles: set[str],
     items: list[NewsItem],
     *,
+    from_dt: datetime,
+    to_dt: datetime,
     batch_size: int = 3,
     per_batch: int = 15,
 ) -> int:
@@ -354,7 +405,13 @@ async def _fetch_mandatory_sector_news(
         batch = sectors[i : i + batch_size]
         terms = " OR ".join(f'"{sector}"' for sector in batch)
         query = f"({terms}) AND (market OR stocks OR earnings OR sector)"
-        articles = await _fetch_newsapi(settings, query, limit=per_batch)
+        articles = await _fetch_newsapi(
+            settings,
+            query,
+            limit=per_batch,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        )
         for article in articles:
             item = _newsapi_to_news_item(article, keyword_map)
             if not item or item.title in seen_titles:
@@ -369,30 +426,6 @@ async def _fetch_mandatory_sector_news(
             items.append(item)
             added += 1
     return added
-
-
-def _yesterday_range_utc(tz_name: str) -> tuple[datetime, datetime]:
-    local = datetime.now(ZoneInfo(tz_name))
-    yesterday = (local - timedelta(days=1)).date()
-    start = datetime(
-        yesterday.year,
-        yesterday.month,
-        yesterday.day,
-        0,
-        0,
-        0,
-        tzinfo=ZoneInfo(tz_name),
-    )
-    end = datetime(
-        yesterday.year,
-        yesterday.month,
-        yesterday.day,
-        23,
-        59,
-        59,
-        tzinfo=ZoneInfo(tz_name),
-    )
-    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 def _newsapi_query_term(term: str) -> str:
@@ -505,9 +538,10 @@ async def collect_news(
 
     items: list[NewsItem] = []
     seen_titles: set[str] = set()
+    from_dt, to_dt = _yesterday_range_utc(tz_name)
 
     for source in sources:
-        entries = _fetch_rss(source)[:per_source]
+        entries = _fetch_rss(source, tz_name=tz_name)[:per_source]
         for entry in entries:
             item = _rss_to_news_item(entry, source["name"], keyword_map)
             if item and item.title not in seen_titles:
@@ -524,7 +558,9 @@ async def collect_news(
         else:
             query = f"ETF ({tickers_query})" if tickers_query else ""
         if query:
-            articles = await _fetch_newsapi(settings, query, limit=30)
+            articles = await _fetch_newsapi(
+                settings, query, limit=30, from_dt=from_dt, to_dt=to_dt
+            )
             for article in articles:
                 item = _newsapi_to_news_item(article, keyword_map)
                 if item and item.title not in seen_titles:
@@ -535,7 +571,9 @@ async def collect_news(
         if extra_terms:
             extra_query = " OR ".join(f'"{term}"' for term in extra_terms if str(term).strip())
             if extra_query:
-                geo_articles = await _fetch_newsapi(settings, extra_query, limit=15)
+                geo_articles = await _fetch_newsapi(
+                    settings, extra_query, limit=15, from_dt=from_dt, to_dt=to_dt
+                )
                 geo_added = 0
                 for article in geo_articles:
                     item = _newsapi_to_news_item(article, keyword_map)
@@ -558,6 +596,8 @@ async def collect_news(
                 keyword_map,
                 seen_titles,
                 items,
+                from_dt=from_dt,
+                to_dt=to_dt,
                 batch_size=batch_size,
                 per_batch=per_batch,
             )
@@ -568,7 +608,6 @@ async def collect_news(
             )
 
         if news_cfg.get("mandatory_company_screening", True) and companies:
-            from_dt, to_dt = _yesterday_range_utc(tz_name)
             company_batch_size = int(news_cfg.get("company_query_batch_size", 5))
             company_per_batch = int(news_cfg.get("company_query_per_batch", 10))
             search_terms = build_company_search_terms(companies)
@@ -594,6 +633,11 @@ async def collect_news(
                 batch_count,
                 company_added,
             )
+    else:
+        logger.warning(
+            "NEWSAPI_KEY не задан — сбор новостей только из RSS; "
+            "после фильтра «вчера» обычно остаётся мало материалов"
+        )
 
     company_term_count = len(build_company_search_terms(companies))
     items.sort(key=lambda x: (x.priority, x.published or datetime.min.replace(tzinfo=timezone.utc)))
