@@ -112,6 +112,13 @@ _DRIVER_COST_MARKERS: tuple[str, ...] = (
     "фондирован",
     "стоимость капитал",
     "логистик",
+    "расход",
+)
+# Рост предложения / добычи — негатив для производителей сырья.
+_DRIVER_SUPPLY_MARKERS: tuple[str, ...] = (
+    "предложен",
+    "добыч",
+    "поставк",
 )
 # Драйверы, где рост — позитив (спрос, маржа, приток и т.п.).
 _DRIVER_GROWTH_POSITIVE_MARKERS: tuple[str, ...] = (
@@ -664,19 +671,68 @@ def _table_row_sentiments(
         return [None] * len(rows)
 
     if merge_top_news:
-        row_sentiments: list[str | None] = [None] * len(rows)
-        for start, span in _top_news_event_groups(rows, event_col=event_col):
-            val = rows[start][impact_col] if impact_col < len(rows[start]) else ""
-            sentiment = impact_sentiment(val)
-            for i in range(start, start + span):
-                row_sentiments[i] = sentiment
-        return row_sentiments
+        return [
+            _top_news_event_sentiment(headers, rows, row_index, event_col=event_col)
+            for row_index in range(len(rows))
+        ]
 
     sentiments: list[str | None] = []
     for row in rows:
         val = row[impact_col] if impact_col < len(row) else ""
         sentiments.append(impact_sentiment(val))
     return sentiments
+
+
+def _top_news_driver_col_index(headers: list[str]) -> int | None:
+    for j, header in enumerate(headers):
+        if "драйвер" in header.lower():
+            return j
+    return None
+
+
+def _top_news_sector_col_index(headers: list[str]) -> int | None:
+    for j, header in enumerate(headers):
+        if "сектор" in header.lower():
+            return j
+    return None
+
+
+def _top_news_event_sentiment(
+    headers: list[str],
+    rows: list[list[str]],
+    row_index: int,
+    *,
+    event_col: int,
+) -> str | None:
+    """Сентимент события по колонке «Сила» (для объединённых ячеек # / Событие / Сила)."""
+    impact_col = _top_news_impact_col_index(headers)
+    if impact_col is None:
+        return None
+    for start, span in _top_news_event_groups(rows, event_col=event_col):
+        if start <= row_index < start + span:
+            val = rows[start][impact_col] if impact_col < len(rows[start]) else ""
+            return impact_sentiment(val)
+    return None
+
+
+def _top_news_cell_sentiment(
+    headers: list[str],
+    row: list[str],
+    col_index: int,
+    event_sentiment: str | None,
+) -> str | None:
+    """§1: сектор и драйвер — по вектору давления на отрасль; # / Событие / Сила — по событию."""
+    merge_cols = set(_top_news_merge_col_indices(headers))
+    if col_index in merge_cols:
+        return event_sentiment
+
+    driver_col = _top_news_driver_col_index(headers)
+    sector_col = _top_news_sector_col_index(headers)
+    if driver_col is None or col_index not in {driver_col, sector_col}:
+        return event_sentiment
+
+    driver_text = row[driver_col] if driver_col < len(row) else ""
+    return _driver_influence_sentiment(driver_text) or "neutral"
 
 
 def _sentiment_text_color(sentiment: str | None) -> tuple[int, int, int]:
@@ -698,9 +754,48 @@ def _row_cell_style(
     )
 
 
-def _driver_influence_sentiment(influence: str) -> str | None:
-    """Позитив / негатив / нейтраль для ячейки «Влияние на драйвер сектора»."""
-    text = _normalize_text(influence).lower()
+def _driver_change_direction(change: str) -> tuple[bool, bool]:
+    """Направление изменения драйвера: (рост, снижение)."""
+    is_rise = any(
+        marker in change
+        for marker in (
+            "рост",
+            "повыш",
+            "выше",
+            "вверх",
+            "расшир",
+            "увелич",
+            "нараст",
+        )
+    )
+    is_fall = any(
+        marker in change
+        for marker in (
+            "снижен",
+            "сниж",
+            "паден",
+            "ниже",
+            "ниж",
+            "вниз",
+            "сокращ",
+            "уменьш",
+            "сжат",
+        )
+    )
+    if "давлен" in change and "вниз" in change:
+        is_fall = True
+    return is_rise, is_fall
+
+
+def _driver_cost_context(driver: str, change: str) -> bool:
+    return any(marker in driver for marker in _DRIVER_COST_MARKERS) or any(
+        marker in change for marker in ("издерж", "затрат", "расход")
+    )
+
+
+def _driver_clause_sentiment(clause: str) -> str | None:
+    """Позитив / негатив / нейтраль для одного драйвера «{драйвер}: {изменение}»."""
+    text = _normalize_text(clause).lower()
     if not text:
         return None
 
@@ -719,16 +814,18 @@ def _driver_influence_sentiment(influence: str) -> str | None:
         return "positive"
     if "сжатие марж" in change:
         return "negative"
-
-    is_rise = "рост" in change
-    is_fall = "снижение" in change
+    is_rise, is_fall = _driver_change_direction(change)
+    if is_fall and ("поддерживает спрос" in change or "поддержка спрос" in change):
+        return "positive"
     if not is_rise and not is_fall:
         return None
 
     if any(marker in driver for marker in _DRIVER_NEGATIVE_WHEN_RISING):
         return "negative" if is_rise else "positive"
-    if any(marker in driver for marker in _DRIVER_COST_MARKERS):
+    if _driver_cost_context(driver, change):
         return "positive" if is_fall else "negative"
+    if any(marker in driver for marker in _DRIVER_SUPPLY_MARKERS):
+        return "negative" if is_rise else "positive"
     if "доходность альтернатив" in driver:
         return "negative" if is_rise else "positive"
     if "риск" in driver or "тариф" in driver:
@@ -741,6 +838,29 @@ def _driver_influence_sentiment(influence: str) -> str | None:
         return "positive" if is_rise else "negative"
 
     return "positive" if is_rise else "negative"
+
+
+def _driver_influence_sentiment(influence: str) -> str | None:
+    """Позитив / негатив / нейтраль по вектору давления на отрасль (драйвер сектора)."""
+    text = _normalize_text(influence).lower()
+    if not text:
+        return None
+
+    clauses = [part.strip() for part in text.split(";") if part.strip()]
+    if len(clauses) <= 1:
+        return _driver_clause_sentiment(text)
+
+    sentiments = [_driver_clause_sentiment(clause) for clause in clauses]
+    sentiments = [s for s in sentiments if s]
+    if not sentiments:
+        return None
+    if all(s == sentiments[0] for s in sentiments):
+        return sentiments[0]
+    if "negative" in sentiments:
+        return "negative"
+    if "positive" in sentiments:
+        return "positive"
+    return "neutral"
 
 
 def _company_news_price_impact_sentiment(news: str) -> str | None:
@@ -1379,7 +1499,11 @@ class _ReportPDF(FPDF):
 
             for i, data_row in enumerate(table.rows):
                 row = pdf_table.row()
-                row_style = _row_cell_style(row_sentiments[i], font_size=font_size)
+                event_sentiment = row_sentiments[i] if merge_top_news else None
+                default_row_style = _row_cell_style(
+                    row_sentiments[i] if not merge_top_news else None,
+                    font_size=font_size,
+                )
                 for j, cell in enumerate(data_row):
                     if merge_top_news and j in merge_cols and i in skip_row_indices:
                         continue
@@ -1395,11 +1519,21 @@ class _ReportPDF(FPDF):
                     cell_kwargs: dict = {}
                     if rowspan:
                         cell_kwargs["rowspan"] = rowspan
+                    if merge_top_news:
+                        cell_sentiment = _top_news_cell_sentiment(
+                            table.headers,
+                            data_row,
+                            j,
+                            event_sentiment,
+                        )
+                        cell_style = _row_cell_style(cell_sentiment, font_size=font_size)
+                    else:
+                        cell_style = default_row_style
                     row.cell(
                         text,
                         align=align,
                         v_align=v_align,
-                        style=row_style,
+                        style=cell_style,
                         **cell_kwargs,
                     )
 
