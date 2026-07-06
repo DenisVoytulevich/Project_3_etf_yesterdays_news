@@ -1,6 +1,48 @@
-"""Тесты раскраски драйверов в PDF."""
+"""Тесты раскраски драйверов и ширины колонок в PDF."""
 
-from src.report.pdf import _driver_influence_sentiment
+from src.report.pdf import (
+    _ReportPDF,
+    _apply_reference_impact_col_width,
+    _find_fonts,
+    _fixed_table_col_widths,
+    _reference_impact_col_fraction,
+    _table_font_size,
+    _table_header_font_size,
+    _table_impact_col_index,
+    _driver_influence_sentiment,
+    FONT_REGULAR,
+)
+
+
+def _pdf_with_fonts() -> _ReportPDF:
+    regular, bold, italic = _find_fonts()
+    pdf = _ReportPDF(footer_title="test")
+    pdf.set_margins(14, 16, 14)
+    pdf.add_page()
+    pdf.add_font(FONT_REGULAR, "", str(regular))
+    pdf.add_font(FONT_REGULAR, "B", str(bold))
+    pdf.add_font(FONT_REGULAR, "I", str(italic or regular))
+    return pdf
+
+
+def test_impact_col_width_matches_table1_reference():
+    pdf = _pdf_with_fonts()
+    body = _table_font_size(5)
+    header = _table_header_font_size(body)
+    ref = _reference_impact_col_fraction(pdf, font_size=body, header_font_size=header)
+
+    table_profiles = [
+        ["#", "Отрасль", "Влияние", "Обоснование"],
+        ["Компания", "Зона", "Отрасль", "Новость", "Влияние"],
+        ["Время", "Событие", "Тип", "Влияние", "На что влияет"],
+    ]
+    for headers in table_profiles:
+        preset = _fixed_table_col_widths(headers)
+        assert preset is not None
+        aligned = _apply_reference_impact_col_width(pdf, headers, preset, ref)
+        impact_j = _table_impact_col_index(headers)
+        assert impact_j is not None
+        assert abs(aligned[impact_j] - ref) < 0.001
 
 
 def test_insurance_losses_rising_is_negative():
