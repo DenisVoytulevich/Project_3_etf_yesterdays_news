@@ -4,17 +4,27 @@ from __future__ import annotations
 
 from src.data.models import PortfolioAnalytics
 from src.structure.aggregation import StructureAnalysis
-from src.structure.labels import infer_etf_theme_sectors, sector_label
+from src.structure.labels import (
+    infer_etf_theme_sectors,
+    preferred_sector_display_name,
+    sector_identity_key,
+    sector_label,
+    sector_matches,
+)
+
+
+def _sector_already_listed(sectors: list[str], name: str) -> bool:
+    return any(sector_matches(existing, name) for existing in sectors)
 
 
 def _add_sector(sectors: list[str], seen: set[str], raw: str) -> None:
     """Добавить отрасль; составные значения «A, B, C» разбиваются по запятой."""
     for part in (raw or "").split(","):
-        name = sector_label(part.strip())
+        name = preferred_sector_display_name(sector_label(part.strip()))
         if not name or name == "—":
             continue
-        key = name.lower()
-        if key in seen:
+        key = sector_identity_key(name)
+        if key in seen or _sector_already_listed(sectors, name):
             continue
         seen.add(key)
         sectors.append(name)

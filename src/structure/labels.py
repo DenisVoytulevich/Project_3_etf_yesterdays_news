@@ -27,16 +27,57 @@ SECTOR_LABELS: dict[str, str] = {
     "Data Center REITs": "Дата центры",
 }
 
+# Известные опечатки и устаревшие формулировки → единое имя в отчёте.
+SECTOR_TYPO_FIXES: dict[str, str] = {
+    "отросль ядерной энергетики": "Ядерная энергетика",
+    "отрасль ядерной энергетики": "Ядерная энергетика",
+}
+
 # Синонимы отраслей для сопоставления (нижний регистр).
 SECTOR_ALIASES: dict[str, list[str]] = {
-    "дата центры": ["data center", "data centers", "дата-центр", "дата-центры"],
+    "дата центры": [
+        "data center",
+        "data centers",
+        "дата-центр",
+        "дата-центры",
+        "дата‑центры",
+        "цод",
+        "цоды",
+    ],
     "финансы": ["financial", "financials", "financial services", "банк", "bank"],
-    "it / technology": ["technology", "information technology", "tech", "semiconductor"],
+    "it / technology": [
+        "technology",
+        "information technology",
+        "tech",
+        "semiconductor",
+        "информационные технологии",
+        "ит и технологии",
+        "технологии",
+    ],
     "промышленность": ["industrial", "industrials"],
     "энергетика": ["energy", "oil", "gas"],
     "здравоохранение": ["health", "healthcare"],
     "недвижимость": ["real estate", "reit"],
-    "телеком": ["telecom", "communication"],
+    "телеком": ["telecom", "communication", "телекоммуникации", "communication services"],
+    "consumer discretionary": [
+        "consumer cyclical",
+        "потребительский сектор",
+        "дискреционный сектор",
+        "дискреционные товары",
+        "потребительский сектор (дискреционные товары и услуги)",
+    ],
+    "consumer staples": [
+        "consumer defensive",
+        "товары повседневного спроса",
+        "основные потребительские товары",
+    ],
+    "авиакомпании": ["airlines", "авиа", "авиаперевозки"],
+    "ядерная энергетика": [
+        "nuclear",
+        "nuclear energy",
+        "отрасль ядерной энергетики",
+        "отросль ядерной энергетики",
+    ],
     "сырьё": ["materials", "basic materials", "mining"],
     "золотодобывающие компании": [
         "gold",
@@ -210,21 +251,74 @@ def sector_label(name: str) -> str:
 
 
 def _normalize_sector_key(sector: str) -> str:
-    return sector.strip().lower()
+    text = sector.strip().lower()
+    text = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2212]", "-", text)
+    text = re.sub(r"[-\s]+", " ", text).strip()
+    return text
 
 
 def sector_aliases(sector: str) -> list[str]:
     """Варианты написания отрасли для нечёткого сопоставления."""
     key = _normalize_sector_key(sector)
-    aliases = [key, sector.strip().lower()]
+    aliases: list[str] = [key]
+
+    def _add(value: str) -> None:
+        norm = _normalize_sector_key(value)
+        if norm and norm not in aliases:
+            aliases.append(norm)
+
     for alias in SECTOR_ALIASES.get(key, []):
-        if alias not in aliases:
-            aliases.append(alias)
+        _add(alias)
+
+    for canonical, alias_list in SECTOR_ALIASES.items():
+        canonical_key = _normalize_sector_key(canonical)
+        alias_keys = {_normalize_sector_key(alias) for alias in alias_list}
+        if key == canonical_key or key in alias_keys:
+            _add(canonical)
+            for alias in alias_list:
+                _add(alias)
+
     labeled = sector_label(sector.strip())
-    labeled_key = _normalize_sector_key(labeled)
-    if labeled_key not in aliases:
-        aliases.append(labeled_key)
+    _add(labeled)
+    for alias in SECTOR_ALIASES.get(_normalize_sector_key(labeled), []):
+        _add(alias)
+
+    for label, mapped in SECTOR_LABELS.items():
+        if _normalize_sector_key(label) == key or _normalize_sector_key(mapped) == key:
+            _add(label)
+            _add(mapped)
+
     return aliases
+
+
+def sector_identity_key(sector: str) -> str:
+    """Нормализованный ключ отрасли для дедупликации (с учётом синонимов и опечаток)."""
+    preferred = preferred_sector_display_name(sector)
+    return _normalize_sector_key(preferred)
+
+
+def preferred_sector_display_name(sector: str) -> str:
+    """Единое отображаемое имя: исправляет опечатки и устаревшие формулировки."""
+    stripped = sector.strip()
+    if not stripped or stripped == "—":
+        return stripped
+    fixed = SECTOR_TYPO_FIXES.get(_normalize_sector_key(stripped))
+    if fixed:
+        return fixed
+    labeled = sector_label(stripped)
+    fixed = SECTOR_TYPO_FIXES.get(_normalize_sector_key(labeled))
+    if fixed:
+        return fixed
+    return labeled
+
+
+def canonical_sector_name(sector: str, required_sectors: list[str]) -> str:
+    """Каноническое имя отрасли: синонимы + исправление опечаток из списка обязательных."""
+    preferred = preferred_sector_display_name(sector)
+    for required in required_sectors:
+        if sector_matches(sector, required):
+            return preferred_sector_display_name(required)
+    return preferred
 
 
 def sector_matches(table_sector: str, required: str) -> bool:
@@ -235,11 +329,9 @@ def sector_matches(table_sector: str, required: str) -> bool:
     req_key = _normalize_sector_key(required)
     if table == req_key:
         return True
-    req_aliases = set(sector_aliases(required))
-    table_aliases = set(sector_aliases(table_sector))
+    req_aliases = {_normalize_sector_key(alias) for alias in sector_aliases(required)}
+    table_aliases = {_normalize_sector_key(alias) for alias in sector_aliases(table_sector)}
     if req_aliases & table_aliases:
-        return True
-    if req_key in table or table in req_key:
         return True
     return False
 

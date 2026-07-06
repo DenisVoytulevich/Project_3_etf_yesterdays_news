@@ -13,7 +13,11 @@ from src.pipeline.models import (
     ValidatedBriefing,
 )
 from src.report.impact_scale import IMPACT_MAX, IMPACT_MIN, is_valid_impact_score, parse_impact_score
-from src.report.markdown_tables import ensure_sector_ratings_coverage, parse_markdown_table_rows
+from src.report.markdown_tables import (
+    deduplicate_sector_ratings,
+    ensure_sector_ratings_coverage,
+    parse_markdown_table_rows,
+)
 from src.structure.labels import sector_matches
 
 logger = logging.getLogger(__name__)
@@ -127,7 +131,7 @@ def _check_sector_ratings(
         return issues
 
     data_rows = rows[1:]
-    seen_sectors: set[str] = set()
+    seen_sectors: list[str] = []
     for row_index, cells in enumerate(data_rows, start=1):
         if len(cells) < 3:
             continue
@@ -135,8 +139,7 @@ def _check_sector_ratings(
         impact_raw = cells[2].strip()
         if sector.lower() == "отрасль":
             continue
-        norm_sector = sector.lower()
-        if norm_sector in seen_sectors:
+        if any(sector_matches(seen, sector) for seen in seen_sectors):
             issues.append(
                 ConsistencyIssue(
                     code="duplicate_sector",
@@ -144,7 +147,7 @@ def _check_sector_ratings(
                     section="sector_ratings",
                 )
             )
-        seen_sectors.add(norm_sector)
+        seen_sectors.append(sector)
 
         if not sector or sector == "—":
             issues.append(
@@ -288,8 +291,10 @@ def run_consistency_validator(
     min_score, max_score = _impact_range()
 
     sections = dict(draft.sections)
+    sector_raw = sections.get("sector_ratings", "")
+    sector_deduped = deduplicate_sector_ratings(sector_raw, focus.screening_sectors)
     sections["sector_ratings"] = ensure_sector_ratings_coverage(
-        sections.get("sector_ratings", ""),
+        sector_deduped,
         focus.screening_sectors,
     )
 
