@@ -97,7 +97,7 @@ _REF_TABLE_HEADER_FONT_SIZE = _REF_TABLE_BODY_FONT_SIZE + _TABLE_HEADER_SIZE_BOO
 
 # Ширины колонок типовых таблиц (fpdf: веса-пропорции, сумма не обязана быть 1).
 _TABLE1_COL_WIDTHS = (4, 34, 10, 19, 33)  # §1: # | Событие | Влияние | Сектор | Драйвер
-_TABLE2_COL_WIDTHS = (5, 35, 10, 50)  # §2: # | Отрасль | Влияние | Обоснование
+_TABLE2_COL_WIDTHS = (4, 36, 10, 50)  # §2: # | Отрасль | Влияние | Обоснование (# как в §1)
 _TABLE3_COL_WIDTHS = (18, 14, 14, 44, 10)  # §3: Компания | Зона | Отрасль | Новость | Влияние
 _TABLE4_COL_WIDTHS = (12, 25, 15, 10, 38)  # §4: Время | Событие | Тип | Влияние | На что влияет
 _IMPACT_COL_WEIGHT = _TABLE1_COL_WIDTHS[2]  # эталон ширины «Влияние» — как в §1
@@ -509,7 +509,7 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
 
     if n == 4:
         if h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] in {"рейтинг", "влияние"}:
-            return (0.05, 0.35, 0.10, 0.50)
+            return _TABLE2_COL_WIDTHS
         if "событие" in h[0] and h[1] in {"сила события", "влияние"}:
             return _TABLE1_COL_WIDTHS
         if h[0] == "#" and "отрасль" in h[3]:
@@ -539,6 +539,17 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
     return None
 
 
+def _is_sector_ratings_table(headers: list[str]) -> bool:
+    """§2 — рейтинг отраслей: # | Отрасль | Влияние | Обоснование."""
+    h = [x.lower().strip() for x in headers]
+    return (
+        len(headers) == 4
+        and h[0] in {"#", "№"}
+        and "отрасль" in h[1]
+        and h[2] in {"рейтинг", "влияние"}
+    )
+
+
 def _fixed_table_col_widths(headers: list[str]) -> tuple[float, ...] | None:
     """Жёсткие профили ширин для таблиц §1–§4 (приоритет над _match_column_fractions)."""
     if _is_top_market_news_table(headers):
@@ -548,7 +559,7 @@ def _fixed_table_col_widths(headers: list[str]) -> tuple[float, ...] | None:
     h = [x.lower().strip() for x in headers]
     if len(headers) == 5 and h[0] == "#" and "событие" in h[1]:
         return _TABLE1_COL_WIDTHS
-    if len(headers) == 4 and h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] in {"рейтинг", "влияние"}:
+    if _is_sector_ratings_table(headers):
         return _TABLE2_COL_WIDTHS
     if (
         len(headers) == 5
@@ -693,6 +704,13 @@ def _top_news_event_groups(
             current = event
     groups.append((start, len(rows) - start))
     return groups
+
+
+def _table_index_col_index(headers: list[str]) -> int | None:
+    for j, header in enumerate(headers):
+        if _column_kind(header) == "index":
+            return j
+    return None
 
 
 def _table_impact_col_index(headers: list[str]) -> int | None:
@@ -1365,24 +1383,22 @@ def _reference_impact_col_fraction(
     return col_widths[impact_j]
 
 
-def _apply_reference_impact_col_width(
+def _apply_reference_col_width_at(
     pdf: FPDF,
     headers: list[str],
     col_widths: tuple[float, ...],
+    col_j: int,
     reference_fraction: float,
 ) -> tuple[float, ...]:
-    """Выравнивает колонку «Влияние» по эталону §1, перераспределяя ширину остальных."""
-    impact_j = _table_impact_col_index(headers)
-    if impact_j is None:
-        return col_widths
+    """Выравнивает колонку col_j по эталону, перераспределяя ширину остальных."""
     epw = pdf.epw
     widths_mm = [fraction * epw for fraction in col_widths]
     target_mm = reference_fraction * epw
-    delta = target_mm - widths_mm[impact_j]
+    delta = target_mm - widths_mm[col_j]
     if abs(delta) < 0.05:
         return col_widths
-    widths_mm[impact_j] = target_mm
-    others = [i for i in range(len(headers)) if i != impact_j]
+    widths_mm[col_j] = target_mm
+    others = [i for i in range(len(headers)) if i != col_j]
     other_total = sum(widths_mm[i] for i in others)
     if other_total <= 0:
         return col_widths
@@ -1397,6 +1413,75 @@ def _apply_reference_impact_col_width(
         scale = epw / total
         widths_mm = [w * scale for w in widths_mm]
     return tuple(w / epw for w in widths_mm)
+
+
+def _apply_reference_impact_col_width(
+    pdf: FPDF,
+    headers: list[str],
+    col_widths: tuple[float, ...],
+    reference_fraction: float,
+) -> tuple[float, ...]:
+    """Выравнивает колонку «Влияние» по эталону §1, перераспределяя ширину остальных."""
+    impact_j = _table_impact_col_index(headers)
+    if impact_j is None:
+        return col_widths
+    return _apply_reference_col_width_at(
+        pdf, headers, col_widths, impact_j, reference_fraction
+    )
+
+
+def _reference_index_col_fraction(
+    pdf: FPDF,
+    *,
+    font_size: float | None = None,
+    header_font_size: float | None = None,
+) -> float:
+    """Доля epw для колонки «#» по эталону таблицы §1."""
+    body_size = font_size if font_size is not None else _REF_TABLE_BODY_FONT_SIZE
+    header_size = (
+        header_font_size
+        if header_font_size is not None
+        else _uniform_table_header_font_size()
+    )
+    headers = list(_REF_TABLE_HEADERS)
+    col_widths = _TABLE1_COL_WIDTHS
+    col_widths = _ensure_top_news_impact_col_width(
+        pdf,
+        headers,
+        col_widths,
+        header_font_size=header_size,
+    )
+    col_widths = _ensure_sector_rating_col_width(
+        pdf,
+        headers,
+        col_widths,
+        header_font_size=header_size,
+        font_size=body_size,
+    )
+    ref_impact = _reference_impact_col_fraction(
+        pdf, font_size=body_size, header_font_size=header_size
+    )
+    col_widths = _apply_reference_impact_col_width(
+        pdf, headers, col_widths, ref_impact
+    )
+    index_j = _table_index_col_index(headers)
+    assert index_j is not None
+    return col_widths[index_j]
+
+
+def _apply_reference_index_col_width(
+    pdf: FPDF,
+    headers: list[str],
+    col_widths: tuple[float, ...],
+    reference_fraction: float,
+) -> tuple[float, ...]:
+    """Выравнивает колонку «#» по эталону §1, перераспределяя ширину остальных."""
+    index_j = _table_index_col_index(headers)
+    if index_j is None:
+        return col_widths
+    return _apply_reference_col_width_at(
+        pdf, headers, col_widths, index_j, reference_fraction
+    )
 
 
 def _ensure_sector_rating_col_width(
@@ -1615,6 +1700,18 @@ class _ReportPDF(FPDF):
                 table.headers,
                 col_widths,
                 ref_impact,
+            )
+        if _is_sector_ratings_table(table.headers):
+            ref_index = _reference_index_col_fraction(
+                self,
+                font_size=_REF_TABLE_BODY_FONT_SIZE,
+                header_font_size=_uniform_table_header_font_size(),
+            )
+            col_widths = _apply_reference_index_col_width(
+                self,
+                table.headers,
+                col_widths,
+                ref_index,
             )
         col_values = [
             [row[j] if j < len(row) else "" for row in table.rows]

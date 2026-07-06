@@ -3,9 +3,12 @@
 from src.report.pdf import (
     _ReportPDF,
     _apply_reference_impact_col_width,
+    _apply_reference_index_col_width,
+    _ensure_sector_rating_col_width,
     _find_fonts,
     _fixed_table_col_widths,
     _reference_impact_col_fraction,
+    _reference_index_col_fraction,
     _REF_TABLE_BODY_FONT_SIZE,
     _REF_TABLE_HEADER_FONT_SIZE,
     _table_font_size,
@@ -53,6 +56,28 @@ def test_impact_col_width_matches_table1_reference():
         impact_j = _table_impact_col_index(headers)
         assert impact_j is not None
         assert abs(aligned[impact_j] - ref) < 0.001
+
+
+def test_sector_ratings_index_col_width_matches_table1_reference():
+    pdf = _pdf_with_fonts()
+    header = _uniform_table_header_font_size()
+    body = _REF_TABLE_BODY_FONT_SIZE
+    ref_index = _reference_index_col_fraction(
+        pdf, font_size=body, header_font_size=header
+    )
+
+    headers = ["#", "Отрасль", "Влияние", "Обоснование"]
+    preset = _fixed_table_col_widths(headers)
+    assert preset is not None
+    col_widths = _ensure_sector_rating_col_width(
+        pdf, headers, preset, header_font_size=header, font_size=body
+    )
+    ref_impact = _reference_impact_col_fraction(
+        pdf, font_size=body, header_font_size=header
+    )
+    col_widths = _apply_reference_impact_col_width(pdf, headers, col_widths, ref_impact)
+    aligned = _apply_reference_index_col_width(pdf, headers, col_widths, ref_index)
+    assert abs(aligned[0] - ref_index) < 0.001
 
 
 def test_sector_ratings_impact_header_fits_at_uniform_size():
