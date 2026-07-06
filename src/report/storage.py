@@ -42,6 +42,7 @@ class ReportMetadata:
     screening_sectors: int = 0
     markdown_file: str = "report.md"
     pdf_file: str | None = "report.pdf"
+    html_file: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -55,6 +56,7 @@ class ReportMetadata:
 class ReportResult:
     markdown: str
     metadata: ReportMetadata
+    html: str | None = None
 
 
 @dataclass
@@ -159,6 +161,7 @@ def save_report(
     *,
     output_dir: Path | None = None,
     save_pdf: bool | None = None,
+    html: str | None = None,
 ) -> SavedReport:
     cfg = reports_config()
     base = output_dir or reports_base_dir()
@@ -174,6 +177,11 @@ def save_report(
 
     md_path = report_dir / metadata.markdown_file
     md_path.write_text(markdown, encoding="utf-8")
+
+    if html:
+        html_name = md_name.replace(".md", ".html")
+        metadata.html_file = html_name
+        (report_dir / html_name).write_text(html, encoding="utf-8")
 
     pdf_path: Path | None = None
     if save_pdf and metadata.pdf_file:
@@ -210,4 +218,4 @@ def save_report(
 def persist_report_result(result: ReportResult) -> SavedReport | None:
     if not reports_config()["enabled"]:
         return None
-    return save_report(result.markdown, result.metadata)
+    return save_report(result.markdown, result.metadata, html=result.html)

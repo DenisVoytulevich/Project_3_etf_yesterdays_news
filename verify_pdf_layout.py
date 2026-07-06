@@ -19,10 +19,11 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 TABLE1_HEADERS = [
+    "#",
     "Событие",
-    "Сила события",
+    "Сила",
     "Сектор",
-    "Влияние на драйвер сектора",
+    "Драйвер сектора",
 ]
 TABLE3_HEADERS = [
     "Компания",
@@ -42,13 +43,12 @@ def main() -> int:
     w1 = _fixed_table_col_widths(TABLE1_HEADERS)
     assert w1 == _TABLE1_COL_WIDTHS
     print("§1 %:", tuple(round(x, 1) for x in _col_width_percents(w1)))
-    print("  Сила события ~5%, Сектор ~21% (было 8% / 14%)")
+    print("  # ~4%, Влияние ~10%")
     print()
     print("§3 профиль:", _TABLE3_COL_WIDTHS)
     w3 = _fixed_table_col_widths(TABLE3_HEADERS)
     assert w3 == _TABLE3_COL_WIDTHS
     print("§3 %:", tuple(round(x, 1) for x in _col_width_percents(w3)))
-    print("  Зона ~14%, Влияние ~12% (было 10% / 16%)")
     print()
 
     md = root / "templates" / "example.md"

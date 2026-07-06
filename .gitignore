@@ -9,6 +9,7 @@ venv/
 data/structure_cache/
 data/reports/
 data/generated/
+data/pipeline/
 data/*.png
 *.pdf
 report_preview.md

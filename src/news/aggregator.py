@@ -531,6 +531,24 @@ async def collect_news(
                     seen_titles.add(item.title)
                     items.append(item)
 
+        extra_terms = news_cfg.get("extra_search_terms", [])
+        if extra_terms:
+            extra_query = " OR ".join(f'"{term}"' for term in extra_terms if str(term).strip())
+            if extra_query:
+                geo_articles = await _fetch_newsapi(settings, extra_query, limit=15)
+                geo_added = 0
+                for article in geo_articles:
+                    item = _newsapi_to_news_item(article, keyword_map)
+                    if item and item.title not in seen_titles:
+                        seen_titles.add(item.title)
+                        items.append(item)
+                        geo_added += 1
+                logger.info(
+                    "Доп. зона поиска (%s): +%d новостей",
+                    ", ".join(str(t) for t in extra_terms[:3]),
+                    geo_added,
+                )
+
         if news_cfg.get("mandatory_sector_screening", True) and screening_sectors:
             batch_size = int(news_cfg.get("sector_query_batch_size", 3))
             per_batch = int(news_cfg.get("sector_query_per_batch", 15))

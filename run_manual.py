@@ -1,4 +1,4 @@
-"""Ручной запуск пайплайна торгового брифинга (без бота)."""
+"""Ручной запуск мультиагентного пайплайна торгового брифинга (без бота)."""
 import asyncio
 import logging
 import sys
@@ -10,7 +10,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from src.config import Settings
-from src.report.generator import ReportGenerationError, generate_report
+from src.report.generator import ReportGenerationError
 from src.report.storage import SavedReport, persist_report_result
 
 logging.basicConfig(
@@ -18,41 +18,29 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+STAGES = (
+    "1/10 Обработчик первичных данных (портфель, структура, зоны интереса)",
+    "2/10 News Collector",
+    "3/10 Entity Extractor",
+    "4/10 Theme Normalizer",
+    "5/10 Analyst",
+    "6/10 QA-1 Редактор",
+    "7/10 QA-2 Аналитика",
+    "8/10 Revision Agent",
+    "9/10 Consistency Validator",
+    "10/10 Renderer (MD/HTML/PDF)",
+)
+
 
 async def run_pipeline():
     from src.calendar.investing import collect_economic_calendar
-    from src.data.sheets import load_portfolio_analytics
-    from src.news.aggregator import collect_news
-    from src.structure.aggregation import load_structure_analysis
+    from src.pipeline.orchestrator import run_multi_agent_pipeline
 
     settings = Settings()
-    print("1/4 Загрузка портфеля из Google Sheets...")
-    analytics = load_portfolio_analytics(settings)
-    print(
-        f"    ETF: {len(analytics.positions)}, "
-        f"стоимость: {analytics.total_volume:,.0f} EUR"
-    )
-
-    print("2/4 Загрузка структуры ETF...")
-    structure = await load_structure_analysis(analytics)
-    print(
-        f"    Бумаг портфеля: {len(structure.portfolio_holdings)}, "
-        f"watchlist: {len(structure.watchlist_tracking_holdings)}"
-    )
-
-    print("3/4 Сбор новостей и календаря...")
+    for stage in STAGES:
+        print(stage)
     calendar = await collect_economic_calendar(days_ahead=1)
-    news = await collect_news(analytics, settings, structure=structure)
-    print(f"    Новостей: {len(news)}, событий календаря: {len(calendar)}")
-
-    print("4/4 Генерация брифинга через OpenAI...")
-    return await generate_report(
-        analytics,
-        news,
-        settings,
-        structure=structure,
-        calendar=calendar,
-    )
+    return await run_multi_agent_pipeline(settings, calendar=calendar)
 
 
 async def main():
@@ -81,6 +69,10 @@ async def main():
     if saved.pdf_path and saved.pdf_path.is_file():
         size_kb = saved.pdf_path.stat().st_size // 1024
         print(f"PDF:      {saved.pdf_path.resolve()} ({size_kb} KB)")
+    if result.html and saved.metadata.html_file:
+        html_path = saved.directory / saved.metadata.html_file
+        if html_path.is_file():
+            print(f"HTML:     {html_path.resolve()}")
     print(f"Модель:   {result.metadata.ai_model}")
     print(f"Новостей: {result.metadata.news_total}")
     print("=" * 60)

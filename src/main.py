@@ -34,20 +34,14 @@ async def main() -> None:
         logger.info("Запуск ежедневного торгового брифинга")
         try:
             saved = await service.execute()
-            await send_briefing_to_chat(bot, settings, saved, single_message=True)
+            await send_briefing_to_chat(bot, settings, saved)
             logger.info("Ежедневный брифинг отправлен")
         except ReportGenerationError as exc:
             logger.error("Брифинг не сформирован: %s", exc)
-            await bot.send_message(
-                settings.telegram_chat_id,
-                f"❌ Брифинг не сформирован: {exc}",
-            )
-        except Exception:
+            await bot.send_message(settings.telegram_chat_id, str(exc))
+        except Exception as exc:
             logger.exception("Ошибка ежедневного брифинга")
-            await bot.send_message(
-                settings.telegram_chat_id,
-                "❌ Не удалось сформировать брифинг. Проверьте логи.",
-            )
+            await bot.send_message(settings.telegram_chat_id, str(exc))
 
     scheduler = setup_scheduler(settings, daily_briefing_job)
     scheduler.start()

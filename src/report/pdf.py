@@ -12,6 +12,8 @@ from fpdf import FPDF
 from fpdf.enums import TableBordersLayout, TableCellFillMode, WrapMode
 from fpdf.fonts import FontFace
 
+from src.report.impact_scale import format_impact_score, impact_sentiment, parse_impact_score
+
 logger = logging.getLogger(__name__)
 
 FONT_REGULAR = "ReportFont"
@@ -68,6 +70,13 @@ _STAR_EMPTY = "\u2606"  # ☆
 _TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _NUMERIC_RE = re.compile(r"^[\d\s.,+%\-–—]+$")
 _RATING_RE = re.compile(r"^[+\-−–]?\d+$")
+_HEADING_SCALE_SUFFIX_RE = re.compile(
+    r"\s*[\(\（]\s*[−\-–+]?\s*5\s*[…\.\·]{1,3}\s*\+?\s*5\s*[\)\）]\s*$"
+)
+_REPORT_BOILERPLATE_PREFIXES = (
+    "Сбор данных:",
+    "Единая шкала «Влияние»",
+)
 
 _INDEX_HEADERS = frozenset({"#", "№", "no", "номер"})
 
@@ -81,13 +90,14 @@ _AI_SECTION_MARKERS = frozenset({
 
 _TABLE_HEADER_FILL = (198, 208, 220)
 _TABLE_BODY_ROW_FILL = (248, 250, 252)
+_TABLE_BODY_TEXT_COLOR = (30, 41, 59)
 _TABLE_HEADER_SIZE_BOOST = 1.0
 
 # Ширины колонок типовых таблиц (fpdf: веса-пропорции, сумма не обязана быть 1).
-_TABLE1_COL_WIDTHS = (38, 5, 21, 36)  # §1: Событие | Сила события | Сектор | Влияние
-_TABLE2_COL_WIDTHS = (6, 30, 15, 49)  # §2: № | Отрасль | Рейтинг | Обоснование
+_TABLE1_COL_WIDTHS = (4, 34, 10, 19, 33)  # §1: # | Событие | Влияние | Сектор | Драйвер
+_TABLE2_COL_WIDTHS = (5, 30, 15, 50)  # §2: # | Отрасль | Влияние | Обоснование
 _TABLE3_COL_WIDTHS = (18, 14, 14, 42, 12)  # §3: Компания | Зона | Отрасль | Новость | Влияние
-_TABLE4_COL_WIDTHS = (12, 25, 15, 12, 36)  # §4: Время | Событие | Тип | Важность | На что влияет
+_TABLE4_COL_WIDTHS = (12, 25, 15, 12, 36)  # §4: Время | Событие | Тип | Влияние | На что влияет
 
 _DRIVER_SENTIMENT_POSITIVE = (22, 128, 68)
 _DRIVER_SENTIMENT_NEGATIVE = (196, 58, 58)
@@ -120,6 +130,17 @@ _DRIVER_COMMODITY_PRICE_MARKERS: tuple[str, ...] = (
     "цена нефт",
     "цены на нефт",
     "цены на сырь",
+)
+# Рост этих драйверов — негатив для сектора (убытки, выплаты, резервы).
+_DRIVER_NEGATIVE_WHEN_RISING: tuple[str, ...] = (
+    "убыт",
+    "страхов",
+    "выплат",
+    "резерв",
+    "claims",
+    "loss",
+    "задерж",
+    "простой",
 )
 # Маркеры влияния новости на котировку (§3).
 _COMPANY_NEWS_POSITIVE_MARKERS: tuple[tuple[str, int], ...] = (
@@ -165,6 +186,8 @@ _COMPANY_NEWS_NEGATIVE_MARKERS: tuple[tuple[str, int], ...] = (
 _COL_WIDTH_HINTS: tuple[tuple[str, float], ...] = (
     ("приоритет", 0.55),
     ("сила события", 0.42),
+    ("сила", 0.38),
+    ("влияние", 0.55),
     ("рейтинг", 0.55),
     ("#", 0.28),
     ("время", 0.85),
@@ -255,6 +278,11 @@ def _sanitize_for_pdf(text: str) -> str:
     for src, dst in replacements.items():
         text = text.replace(src, dst)
     return _EMOJI_RE.sub("", text)
+
+
+def _is_report_boilerplate(text: str) -> bool:
+    normalized = text.strip().strip("_").strip()
+    return any(normalized.startswith(prefix) for prefix in _REPORT_BOILERPLATE_PREFIXES)
 
 
 def _parse_table_row(line: str) -> list[str]:
@@ -349,6 +377,8 @@ def _iter_markdown_blocks(text: str) -> Iterator[MdBlock]:
         italic = joined.startswith("_") and joined.endswith("_") and joined.count("_") >= 2
         if italic:
             joined = joined.strip("_").strip()
+        if _is_report_boilerplate(joined):
+            continue
         yield MdParagraph(text=joined, italic=italic)
 
 
@@ -373,27 +403,34 @@ def _is_index_header(header: str) -> bool:
     return header.strip().lower() in _INDEX_HEADERS
 
 
+def _is_impact_score_header(header: str) -> bool:
+    """Числовая колонка «Влияние» / «Сила» (−5…+5), не текстовый драйвер."""
+    h = header.strip().lower()
+    if h in {"влияние", "значимость", "рейтинг", "сила", "важность"}:
+        return True
+    if h == "сила события":
+        return True
+    return False
+
+
 def _is_sector_rating_header(header: str) -> bool:
-    """Колонка «Рейтинг» в §2 (не «Рейтинг сектора»)."""
-    return header.strip().lower() == "рейтинг"
+    """Колонка «Влияние» / «Рейтинг» в §2."""
+    return _is_impact_score_header(header)
 
 
 def _is_portfolio_influence_header(header: str) -> bool:
-    """Колонка «Влияние» в §3 (не «Влияние на драйвер сектора»)."""
-    return header.strip().lower() in {"влияние", "значимость"}
+    """Колонка «Влияние» в §3."""
+    h = header.strip().lower()
+    return h in {"влияние", "значимость"}
 
 
 def _column_align(header: str, values: list[str]) -> str:
     h = header.lower().strip()
-    if _is_index_header(header) or _is_sector_rating_header(header):
-        return "CENTER"
-    if _is_portfolio_influence_header(header):
-        return "CENTER"
-    if "сила события" in h:
+    if _is_index_header(header) or _is_impact_score_header(header):
         return "CENTER"
     if h == "время":
         return "CENTER"
-    if "важность" in h:
+    if "важность" in h and not _is_impact_score_header(header):
         return "CENTER"
     if any(k in h for k in ("кол-во", "количество")):
         return "CENTER"
@@ -431,14 +468,16 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
             return (0.18, 0.46, 0.36)
 
     if n == 4:
-        if h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] == "рейтинг":
-            return (0.06, 0.30, 0.15, 0.49)
-        if "событие" in h[0] and "сила события" in h[1]:
+        if h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] in {"рейтинг", "влияние"}:
+            return (0.05, 0.30, 0.15, 0.50)
+        if "событие" in h[0] and h[1] in {"сила события", "влияние"}:
             return _TABLE1_COL_WIDTHS
         if h[0] == "#" and "отрасль" in h[3]:
             return (0.05, 0.40, 0.20, 0.35)
 
     if n == 5:
+        if h[0] == "#" and "событие" in h[1] and h[2] in {"сила", "влияние", "сила события"}:
+            return _TABLE1_COL_WIDTHS
         if "isin" in h[0] and "название" in h[1] and "кол-во" in h[2] and "стоимость" in h[3]:
             # ISIN +30% за счёт «Кол-во», «Стоимость EUR», «Доля %»
             return (0.19, 0.40, 0.13, 0.14, 0.14)
@@ -450,7 +489,7 @@ def _match_column_fractions(headers: list[str]) -> tuple[float, ...] | None:
             return (0.12, 0.13, 0.15, 0.32, 0.28)
         if "дата" in h[0] and "почему важно" in h[3]:
             return (0.13, 0.17, 0.16, 0.28, 0.26)
-        if h[0] == "время" and h[1] == "событие" and h[2] == "тип" and "важность" in h[3]:
+        if h[0] == "время" and h[1] == "событие" and h[2] == "тип" and h[3] in {"важность", "влияние"}:
             return _TABLE4_COL_WIDTHS
         if "компания" in h[0] and "зона" in h[1] and "новость" in h[3]:
             return _TABLE3_COL_WIDTHS
@@ -465,14 +504,16 @@ def _fixed_table_col_widths(headers: list[str]) -> tuple[float, ...] | None:
     if _is_portfolio_companies_news_table(headers):
         return _TABLE3_COL_WIDTHS
     h = [x.lower().strip() for x in headers]
-    if len(headers) == 4 and h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] == "рейтинг":
+    if len(headers) == 5 and h[0] == "#" and "событие" in h[1]:
+        return _TABLE1_COL_WIDTHS
+    if len(headers) == 4 and h[0] in {"#", "№"} and "отрасль" in h[1] and h[2] in {"рейтинг", "влияние"}:
         return _TABLE2_COL_WIDTHS
     if (
         len(headers) == 5
         and h[0] == "время"
         and h[1] == "событие"
         and h[2] == "тип"
-        and "важность" in h[3]
+        and h[3] in {"важность", "влияние"}
     ):
         return _TABLE4_COL_WIDTHS
     return None
@@ -486,11 +527,86 @@ def _col_width_percents(col_widths: tuple[float, ...]) -> tuple[float, ...]:
 
 
 def _is_top_market_news_table(headers: list[str]) -> bool:
-    """§1 — топ новости: Событие | Сила события | Сектор | Влияние."""
+    """§1 — топ новости: # | Событие | Сила | Сектор | Драйвер."""
+    if len(headers) == 5:
+        h = [x.lower().strip() for x in headers]
+        return (
+            h[0] == "#"
+            and "событие" in h[1]
+            and h[2] in {"сила", "влияние", "сила события"}
+            and "сектор" in h[3]
+            and "драйвер" in h[4]
+        )
     if len(headers) != 4:
         return False
     h = [x.lower().strip() for x in headers]
-    return "событие" in h[0] and "сила события" in h[1] and "сектор" in h[2]
+    impact_col = h[1] in {"сила события", "влияние", "сила"}
+    driver_col = "драйвер" in h[3] or ("влияние" in h[3] and "драйвер" in h[3])
+    return "событие" in h[0] and impact_col and "сектор" in h[2] and driver_col
+
+
+def _top_news_event_col_index(headers: list[str]) -> int:
+    h = [x.lower().strip() for x in headers]
+    if h and h[0] == "#":
+        return 1
+    return 0
+
+
+def _top_news_impact_col_index(headers: list[str]) -> int | None:
+    h = [x.lower().strip() for x in headers]
+    if len(h) >= 5 and h[0] == "#":
+        return 2
+    if len(h) >= 4:
+        if h[1] in {"сила", "влияние", "сила события"}:
+            return 1
+    return None
+
+
+def _top_news_merge_col_indices(headers: list[str]) -> tuple[int, ...]:
+    if len(headers) == 5 and headers[0].strip() == "#":
+        return (0, 1, 2)
+    return (0, 1)
+
+
+def _sort_top_market_news_rows(headers: list[str], rows: list[list[str]]) -> list[list[str]]:
+    """§1: сортировка по |влияние| (убывание), перенумерация #."""
+    if not rows:
+        return rows
+    impact_col = _top_news_impact_col_index(headers)
+    if impact_col is None:
+        return rows
+    event_col = _top_news_event_col_index(headers)
+    index_col = 0 if headers and _is_index_header(headers[0]) else None
+
+    def group_sort_key(start_span: tuple[int, int]) -> tuple[int, int]:
+        start, _span = start_span
+        cell = rows[start][impact_col] if impact_col < len(rows[start]) else ""
+        score = parse_impact_score(cell)
+        abs_score = abs(score) if score is not None else -1
+        return (-abs_score, start)
+
+    groups = _top_news_event_groups(rows, event_col=event_col)
+    sorted_groups = sorted(groups, key=group_sort_key)
+
+    sorted_rows: list[list[str]] = []
+    num = 1
+    for start, span in sorted_groups:
+        for offset in range(span):
+            row = list(rows[start + offset])
+            if index_col is not None and index_col < len(row):
+                row[index_col] = str(num)
+            sorted_rows.append(row)
+        num += 1
+    return sorted_rows
+
+
+def _prepare_top_market_news_table(table: MdTable) -> MdTable:
+    if not _is_top_market_news_table(table.headers):
+        return table
+    return MdTable(
+        headers=table.headers,
+        rows=_sort_top_market_news_rows(table.headers, table.rows),
+    )
 
 
 def _is_portfolio_companies_news_table(headers: list[str]) -> bool:
@@ -506,15 +622,19 @@ def _is_portfolio_companies_news_table(headers: list[str]) -> bool:
     )
 
 
-def _top_news_event_groups(rows: list[list[str]]) -> list[tuple[int, int]]:
+def _top_news_event_groups(
+    rows: list[list[str]],
+    *,
+    event_col: int,
+) -> list[tuple[int, int]]:
     """Группы подряд идущих строк с одинаковым событием: (индекс первой, rowspan)."""
     if not rows:
         return []
     groups: list[tuple[int, int]] = []
     start = 0
-    current = _normalize_text(rows[0][0] if rows[0] else "")
+    current = _normalize_text(rows[0][event_col] if rows[0] and event_col < len(rows[0]) else "")
     for i in range(1, len(rows)):
-        event = _normalize_text(rows[i][0] if i < len(rows) and rows[i] else "")
+        event = _normalize_text(rows[i][event_col] if event_col < len(rows[i]) else "")
         if event != current:
             groups.append((start, i - start))
             start = i
@@ -523,33 +643,59 @@ def _top_news_event_groups(rows: list[list[str]]) -> list[tuple[int, int]]:
     return groups
 
 
-def _top_news_sentiment_column_indices(headers: list[str]) -> tuple[int | None, int | None]:
-    sector_idx: int | None = None
-    influence_idx: int | None = None
+def _table_impact_col_index(headers: list[str]) -> int | None:
+    """Индекс числовой колонки «Влияние» / «Сила» в таблице отчёта."""
     for j, header in enumerate(headers):
-        h = header.lower().strip()
-        if h == "сектор":
-            sector_idx = j
-        elif "влияние" in h and "драйвер" in h:
-            influence_idx = j
-    return sector_idx, influence_idx
+        if _is_impact_score_header(header):
+            return j
+    return None
 
 
-def _portfolio_news_sentiment_column_indices(
+def _table_row_sentiments(
     headers: list[str],
-) -> tuple[int | None, int | None, int | None]:
-    company_idx: int | None = None
-    sector_idx: int | None = None
-    news_idx: int | None = None
-    for j, header in enumerate(headers):
-        h = header.lower().strip()
-        if "компания" in h:
-            company_idx = j
-        elif h == "отрасль":
-            sector_idx = j
-        elif "новость" in h:
-            news_idx = j
-    return company_idx, sector_idx, news_idx
+    rows: list[list[str]],
+    *,
+    merge_top_news: bool = False,
+    event_col: int = 0,
+) -> list[str | None]:
+    """Позитив / негатив / нейтраль для каждой строки по колонке «Влияние»."""
+    impact_col = _table_impact_col_index(headers)
+    if impact_col is None:
+        return [None] * len(rows)
+
+    if merge_top_news:
+        row_sentiments: list[str | None] = [None] * len(rows)
+        for start, span in _top_news_event_groups(rows, event_col=event_col):
+            val = rows[start][impact_col] if impact_col < len(rows[start]) else ""
+            sentiment = impact_sentiment(val)
+            for i in range(start, start + span):
+                row_sentiments[i] = sentiment
+        return row_sentiments
+
+    sentiments: list[str | None] = []
+    for row in rows:
+        val = row[impact_col] if impact_col < len(row) else ""
+        sentiments.append(impact_sentiment(val))
+    return sentiments
+
+
+def _sentiment_text_color(sentiment: str | None) -> tuple[int, int, int]:
+    if sentiment:
+        return _driver_sentiment_color(sentiment)
+    return _TABLE_BODY_TEXT_COLOR
+
+
+def _row_cell_style(
+    sentiment: str | None,
+    *,
+    font_size: float,
+) -> FontFace:
+    return FontFace(
+        family=FONT_REGULAR,
+        size_pt=font_size,
+        color=_sentiment_text_color(sentiment),
+        fill_color=_TABLE_BODY_ROW_FILL,
+    )
 
 
 def _driver_influence_sentiment(influence: str) -> str | None:
@@ -579,6 +725,8 @@ def _driver_influence_sentiment(influence: str) -> str | None:
     if not is_rise and not is_fall:
         return None
 
+    if any(marker in driver for marker in _DRIVER_NEGATIVE_WHEN_RISING):
+        return "negative" if is_rise else "positive"
     if any(marker in driver for marker in _DRIVER_COST_MARKERS):
         return "positive" if is_fall else "negative"
     if "доходность альтернатив" in driver:
@@ -636,14 +784,6 @@ def _driver_sentiment_color(sentiment: str) -> tuple[int, int, int]:
     }[sentiment]
 
 
-def _driver_sentiment_font_style(sentiment: str, *, font_size: float) -> FontFace:
-    return FontFace(
-        family=FONT_REGULAR,
-        size_pt=font_size,
-        color=_driver_sentiment_color(sentiment),
-    )
-
-
 def _compute_col_widths(
     pdf: FPDF,
     headers: list[str],
@@ -694,8 +834,19 @@ def _table_header_font_size(body_size: float) -> float:
 
 
 def _header_cell_text(text: str) -> str:
-    """Заголовок колонки: нормализованные пробелы."""
-    return " ".join(text.strip().split())
+    """Заголовок колонки: короткие подписи без разрыва слов."""
+    normalized = " ".join(text.strip().split())
+    short = {
+        "Сила события": "Сила",
+        "Влияние на драйвер сектора": "Драйвер",
+    }
+    return short.get(normalized, normalized)
+
+
+def _normalize_heading_text(text: str) -> str:
+    """Убирает шкалу (−5…+5) из заголовков секций в PDF."""
+    normalized = _normalize_text(text)
+    return _HEADING_SCALE_SUFFIX_RE.sub("", normalized).rstrip()
 
 
 def _normalize_text(text: str) -> str:
@@ -707,18 +858,12 @@ def _column_kind(header: str) -> str | None:
     h = header.lower().strip()
     if _is_index_header(header):
         return "index"
-    if _is_sector_rating_header(header):
-        return "sector_rating"
-    if "важность" in h:
-        return "importance"
+    if _is_impact_score_header(header):
+        return "impact_score"
     if h == "приоритет" or h.startswith("приоритет"):
         return "priority"
-    if "сила события" in h:
-        return "event_strength"
     if h == "время":
         return "time"
-    if _is_portfolio_influence_header(header):
-        return "portfolio_influence"
     if "отрасль" in h:
         return "sector"
     return None
@@ -747,9 +892,11 @@ def _format_importance_stars(value: str) -> str:
 
 def _format_table_cell(header: str, value: str) -> str:
     kind = _column_kind(header)
-    if kind == "importance":
+    if kind == "impact_score":
+        if parse_impact_score(value) is not None:
+            return format_impact_score(value)
         return _format_importance_stars(value)
-    if kind in {"priority", "index", "event_strength", "sector_rating", "time", "portfolio_influence"}:
+    if kind in {"priority", "index", "time"}:
         return value.strip()
     return _normalize_text(value)
 
@@ -769,7 +916,7 @@ def _ensure_header_fits(
     adjusted = list(widths_mm)
     for j, header in enumerate(headers):
         kind = _column_kind(header)
-        if kind in {"event_strength", "portfolio_influence"}:
+        if kind in {"impact_score", "portfolio_influence"}:
             continue
         label = _header_cell_text(header)
         needed = pdf.get_string_width(label) + padding
@@ -885,10 +1032,13 @@ def _ensure_event_strength_col_width(
     padding = 3.5
     changed = False
     for j, header in enumerate(headers):
-        if _column_kind(header) != "event_strength":
+        if _column_kind(header) != "impact_score":
             continue
         pdf.set_font(FONT_REGULAR, size=font_size)
-        needed = pdf.get_string_width("5") + padding
+        needed = max(
+            pdf.get_string_width("+5") + padding,
+            pdf.get_string_width("−5") + padding,
+        )
         if needed > widths_mm[j]:
             widths_mm[j] = needed
             changed = True
@@ -934,6 +1084,38 @@ def _ensure_time_col_width(
     return tuple((w * scale) / epw for w in widths_mm)
 
 
+def _ensure_top_news_impact_col_width(
+    pdf: FPDF,
+    headers: list[str],
+    col_widths: tuple[float, ...],
+    *,
+    header_font_size: float,
+) -> tuple[float, ...]:
+    """§1: заголовок «Влияние» в одну строку — за счёт колонки «Драйвер сектора»."""
+    if not _is_top_market_news_table(headers):
+        return col_widths
+    impact_j = _top_news_impact_col_index(headers)
+    if impact_j is None:
+        return col_widths
+    driver_j = len(headers) - 1
+    epw = pdf.epw
+    widths_mm = [fraction * epw for fraction in col_widths]
+    padding = 4.0
+    pdf.set_font(FONT_REGULAR, "B", header_font_size)
+    needed = pdf.get_string_width(_header_cell_text(headers[impact_j])) + padding
+    if needed <= widths_mm[impact_j]:
+        return col_widths
+    delta = needed - widths_mm[impact_j]
+    min_driver = max(widths_mm[driver_j] * 0.45, epw * 0.18)
+    if widths_mm[driver_j] - delta < min_driver:
+        delta = max(0.0, widths_mm[driver_j] - min_driver)
+    if delta <= 0:
+        return col_widths
+    widths_mm[impact_j] += delta
+    widths_mm[driver_j] -= delta
+    return tuple(w / epw for w in widths_mm)
+
+
 def _ensure_sector_rating_col_width(
     pdf: FPDF,
     headers: list[str],
@@ -942,13 +1124,13 @@ def _ensure_sector_rating_col_width(
     header_font_size: float,
     font_size: float,
 ) -> tuple[float, ...]:
-    """Колонка «Рейтинг» (§2): узкая, значения +5…−5 по центру без переноса."""
+    """Колонка «Влияние» (−5…+5): узкая, значения по центру без переноса."""
     epw = pdf.epw
     widths_mm = [fraction * epw for fraction in col_widths]
     padding = 5.0
     changed = False
     for j, header in enumerate(headers):
-        if _column_kind(header) != "sector_rating":
+        if _column_kind(header) != "impact_score":
             continue
         pdf.set_font(FONT_REGULAR, "B", header_font_size)
         needed = pdf.get_string_width(_header_cell_text(header)) + padding
@@ -1020,7 +1202,9 @@ class _ReportPDF(FPDF):
         self.set_font(FONT_REGULAR, "B", _HEADING_SIZES[level])
         color = _HEADING_COLORS[level]
         self.set_text_color(*color)
-        self.multi_cell(self.epw, _HEADING_SIZES[level] * 0.45, _normalize_text(block.text))
+        self.multi_cell(
+            self.epw, _HEADING_SIZES[level] * 0.45, _normalize_heading_text(block.text)
+        )
         self.set_text_color(0, 0, 0)
         self.ln(1)
 
@@ -1060,6 +1244,8 @@ class _ReportPDF(FPDF):
         if not table.headers:
             return
 
+        table = _prepare_top_market_news_table(table)
+
         ncols = len(table.headers)
         font_size = _table_font_size(ncols)
         header_font_size = _table_header_font_size(font_size)
@@ -1073,11 +1259,14 @@ class _ReportPDF(FPDF):
                 table.headers,
                 tuple(round(p, 1) for p in _col_width_percents(col_widths)),
             )
-            if any(_column_kind(h) == "importance" for h in table.headers):
-                col_widths = _ensure_importance_col_width(
-                    self, table.headers, col_widths, font_size=font_size
+            if _is_top_market_news_table(table.headers):
+                col_widths = _ensure_top_news_impact_col_width(
+                    self,
+                    table.headers,
+                    col_widths,
+                    header_font_size=header_font_size,
                 )
-            if any(_is_sector_rating_header(h) for h in table.headers):
+            if any(_column_kind(h) == "impact_score" for h in table.headers):
                 col_widths = _ensure_sector_rating_col_width(
                     self,
                     table.headers,
@@ -1094,9 +1283,6 @@ class _ReportPDF(FPDF):
                 table.headers,
                 col_widths,
                 header_font_size=header_font_size,
-            )
-            col_widths = _ensure_importance_col_width(
-                self, table.headers, col_widths, font_size=font_size
             )
             col_widths = _ensure_priority_col_width(
                 self,
@@ -1163,8 +1349,7 @@ class _ReportPDF(FPDF):
             first_row_as_headings=True,
             repeat_headings=True,
             borders_layout=TableBordersLayout.ALL,
-            cell_fill_color=_TABLE_BODY_ROW_FILL,
-            cell_fill_mode=TableCellFillMode.EVEN_ROWS,
+            cell_fill_mode=TableCellFillMode.NONE,
             wrapmode=WrapMode.WORD,
             padding=(1.4, 1.6, 1.4, 1.6),
             outer_border_width=0.25,
@@ -1173,106 +1358,50 @@ class _ReportPDF(FPDF):
             for header in table.headers:
                 row.cell(_header_cell_text(header), align="C", v_align="MIDDLE")
             merge_top_news = _is_top_market_news_table(table.headers)
-            portfolio_news = _is_portfolio_companies_news_table(table.headers)
-            sector_col_idx, influence_col_idx = _top_news_sentiment_column_indices(
-                table.headers
+            event_col = _top_news_event_col_index(table.headers) if merge_top_news else 0
+            merge_cols = _top_news_merge_col_indices(table.headers) if merge_top_news else ()
+            row_sentiments = _table_row_sentiments(
+                table.headers,
+                table.rows,
+                merge_top_news=merge_top_news,
+                event_col=event_col,
             )
-            company_col_idx, portfolio_sector_idx, news_col_idx = (
-                _portfolio_news_sentiment_column_indices(table.headers)
-            )
-            portfolio_sentiment_cols = {
-                idx
-                for idx in (company_col_idx, portfolio_sector_idx, news_col_idx)
-                if idx is not None
-            }
             rowspan_by_row: dict[int, int] = {}
-            skip_merge_cols: set[int] = set()
+            skip_row_indices: set[int] = set()
             if merge_top_news:
-                for start, span in _top_news_event_groups(table.rows):
+                for start, span in _top_news_event_groups(
+                    table.rows,
+                    event_col=event_col,
+                ):
                     if span > 1:
                         rowspan_by_row[start] = span
-                        skip_merge_cols.update(range(start + 1, start + span))
+                        skip_row_indices.update(range(start + 1, start + span))
 
             for i, data_row in enumerate(table.rows):
-                row_sentiment: str | None = None
-                if merge_top_news and influence_col_idx is not None:
-                    influence_val = (
-                        data_row[influence_col_idx]
-                        if influence_col_idx < len(data_row)
-                        else ""
-                    )
-                    row_sentiment = _driver_influence_sentiment(influence_val)
-                elif portfolio_news and news_col_idx is not None:
-                    news_val = (
-                        data_row[news_col_idx]
-                        if news_col_idx < len(data_row)
-                        else ""
-                    )
-                    row_sentiment = _company_news_price_impact_sentiment(news_val)
-
                 row = pdf_table.row()
+                row_style = _row_cell_style(row_sentiments[i], font_size=font_size)
                 for j, cell in enumerate(data_row):
-                    if merge_top_news and j in (0, 1) and i in skip_merge_cols:
+                    if merge_top_news and j in merge_cols and i in skip_row_indices:
                         continue
                     header = table.headers[j]
                     text = _format_table_cell(header, cell)
                     align = text_align[j]
                     rowspan = (
                         rowspan_by_row[i]
-                        if merge_top_news and j in (0, 1) and i in rowspan_by_row
+                        if merge_top_news and j in merge_cols and i in rowspan_by_row
                         else None
                     )
                     v_align = "MIDDLE" if rowspan else "TOP"
                     cell_kwargs: dict = {}
                     if rowspan:
                         cell_kwargs["rowspan"] = rowspan
-                    if _column_kind(header) == "priority":
-                        row.cell(text, align="C", v_align=v_align, **cell_kwargs)
-                    elif _column_kind(header) == "index":
-                        row.cell(text, align="C", v_align=v_align, **cell_kwargs)
-                    elif _column_kind(header) == "event_strength":
-                        row.cell(text, align="C", v_align=v_align, **cell_kwargs)
-                    elif _column_kind(header) == "time":
-                        row.cell(text, align="C", v_align=v_align, **cell_kwargs)
-                    elif _column_kind(header) == "sector_rating":
-                        row.cell(text, align="C", v_align=v_align, **cell_kwargs)
-                    elif _column_kind(header) == "portfolio_influence":
-                        row.cell(text, align="C", v_align="MIDDLE", **cell_kwargs)
-                    elif _column_kind(header) == "importance" and self.star_font_loaded:
-                        row.cell(
-                            text,
-                            align="C",
-                            v_align=v_align,
-                            style=FontFace(
-                                family=FONT_STARS,
-                                size_pt=font_size + 0.5,
-                                color=(180, 130, 0),
-                            ),
-                            **cell_kwargs,
-                        )
-                    elif (
-                        row_sentiment
-                        and (
-                            (
-                                merge_top_news
-                                and j in {sector_col_idx, influence_col_idx}
-                            )
-                            or (
-                                portfolio_news and j in portfolio_sentiment_cols
-                            )
-                        )
-                    ):
-                        row.cell(
-                            text,
-                            align=align,
-                            v_align=v_align,
-                            style=_driver_sentiment_font_style(
-                                row_sentiment, font_size=font_size
-                            ),
-                            **cell_kwargs,
-                        )
-                    else:
-                        row.cell(text, align=align, v_align=v_align, **cell_kwargs)
+                    row.cell(
+                        text,
+                        align=align,
+                        v_align=v_align,
+                        style=row_style,
+                        **cell_kwargs,
+                    )
 
         self.ln(3)
         self.set_x(self.l_margin)

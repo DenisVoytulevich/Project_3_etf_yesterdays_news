@@ -9,6 +9,9 @@ schedule:
 news:
   max_items: 150
   lookback_hours: 36
+  extra_search_terms:
+    - "геополитические ожидания"
+    - "geopolitical expectations"
   # Обязательный скрининг по отраслям интереса (Portfel + Watchlist)
   mandatory_sector_screening: true
   sector_query_batch_size: 3
@@ -19,6 +22,10 @@ news:
   company_query_per_batch: 10
 
 sector_rating:
+  min: -5
+  max: 5
+
+impact_scale:
   min: -5
   max: 5
 
@@ -79,7 +86,8 @@ structure:
 
 news_sources:
   - name: "Reuters Business"
-    url: "https://feeds.reuters.com/reuters/businessNews"
+    # feeds.reuters.com снят с DNS (Reuters отключил RSS в 2020); зеркало через Google News
+    url: "https://news.google.com/rss/search?q=site:reuters.com+business&hl=en-US&gl=US&ceid=US:en"
     lang: en
   - name: "Yahoo Finance"
     url: "https://finance.yahoo.com/news/rssindex"
@@ -103,3 +111,17 @@ reports:
   save_pdf: true
 
 telegram_max_message: 4000
+
+# --- Мультиагентный пайплайн ---
+pipeline:
+  save_checkpoints: true
+  checkpoint_dir: data/pipeline
+  # Модели по агентам (пустое = OPENAI_MODEL из .env).
+  # Схема: nano — массовая структурная работа; mini — нормализация и QA-редактура;
+  # gpt-5 — аналитика и фактчекинг (ядро качества брифинга).
+  entity_extractor_model: "gpt-5-nano"      # ~150 новостей, только факты → дёшево
+  theme_normalizer_model: "gpt-5-mini"      # сопоставление со словарями
+  analyst_model: "gpt-5"                    # черновик отчёта — главный продукт
+  qa_editor_model: "gpt-5-mini"             # грамматика и стиль
+  qa_analytics_model: "gpt-5"               # логика и сверка с источниками
+  revision_model: "gpt-5-mini"              # точечные правки по замечаниям QA
