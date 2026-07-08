@@ -19,6 +19,7 @@ def setup_scheduler(
         CronTrigger(
             hour=settings.daily_briefing_hour,
             minute=settings.daily_briefing_minute,
+            timezone=settings.timezone,
         ),
         id="daily_briefing",
         replace_existing=True,

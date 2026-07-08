@@ -8,6 +8,10 @@ services:
       - ../.env
     environment:
       DAILY_BRIEFING_DATA_DIR: /app/data
+      TIMEZONE: Europe/Warsaw
+      DAILY_BRIEFING_HOUR: "9"
+      DAILY_BRIEFING_MINUTE: "0"
+      TZ: Europe/Warsaw
     volumes:
       - ../data:/app/data
       - ../credentials:/app/credentials:ro
