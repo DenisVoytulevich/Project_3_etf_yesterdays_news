@@ -9,6 +9,7 @@ from src.bot.keyboards import MANUAL_REPORT_BUTTON, main_keyboard
 from src.config import Settings
 from src.report.generator import ReportGenerationError
 from src.report.storage import SavedReport, persist_report_result
+from src.service_state import DISABLED_MESSAGE, is_service_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +69,14 @@ async def send_briefing_to_chat(
 
 BRIEFING_STARTED_MESSAGE = "Генерация брифинга запущена. PDF придёт в этот чат."
 BRIEFING_ALREADY_RUNNING_MESSAGE = "Сервис уже выполняется. Дождитесь завершения."
+BRIEFING_DISABLED_MESSAGE = DISABLED_MESSAGE
 
 
 async def run_manual_briefing(message: Message, service: BriefingService, settings: Settings) -> None:
+    if not is_service_enabled():
+        await message.answer(BRIEFING_DISABLED_MESSAGE)
+        return
+
     if service.is_running:
         await message.answer(BRIEFING_ALREADY_RUNNING_MESSAGE)
         return
@@ -106,9 +112,10 @@ def create_bot_handlers(service: BriefingService, settings: Settings) -> Router:
 
     @router.message(Command("status"))
     async def cmd_status(message: Message) -> None:
+        enabled = "включён" if is_service_enabled() else "отключён"
         running = "выполняется" if service.is_running else "ожидание"
         await message.answer(
-            f"Сервис: {running}\n"
+            f"Сервис: {enabled} / {running}\n"
             f"Часовой пояс: {settings.timezone}\n"
             f"Автоотчёт: {settings.daily_briefing_hour:02d}:"
             f"{settings.daily_briefing_minute:02d}\n"

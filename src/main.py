@@ -31,6 +31,12 @@ async def main() -> None:
     dp.include_router(create_bot_handlers(service, settings))
 
     async def daily_briefing_job() -> None:
+        from src.service_state import is_service_enabled
+
+        if not is_service_enabled():
+            logger.info("Ежедневный брифинг пропущен: сервис отключён")
+            return
+
         logger.info("Запуск ежедневного торгового брифинга")
         try:
             saved = await service.execute()

@@ -215,6 +215,65 @@ def save_report(
     )
 
 
+def list_reports(limit: int = 50) -> list[dict[str, Any]]:
+    """Возвращает последние записи из index.json (newest first)."""
+    entries = _load_index(reports_base_dir())[: max(0, limit)]
+    return entries
+
+
+def get_report_path(report_id: str, *, kind: str = "pdf") -> Path | None:
+    """Путь к файлу отчёта по id (md | pdf | html | dir)."""
+    for entry in _load_index(reports_base_dir()):
+        if entry.get("id") != report_id:
+            continue
+        rel_dir = entry.get("directory")
+        if not rel_dir:
+            return None
+        report_dir = reports_base_dir() / rel_dir
+        if kind == "dir":
+            return report_dir if report_dir.is_dir() else None
+        default_md, default_pdf = report_filenames(report_id)
+        if kind == "pdf":
+            filename = entry.get("pdf_file") or default_pdf
+        elif kind == "html":
+            filename = entry.get("html_file")
+            if not filename:
+                return None
+        else:
+            filename = entry.get("markdown_file") or default_md
+        path = report_dir / filename
+        return path if path.is_file() else None
+    return None
+
+
+def delete_report(report_id: str) -> bool:
+    """Удаляет каталог отчёта и запись из index.json. True если что-то удалили."""
+    base = reports_base_dir()
+    entries = _load_index(base)
+    kept: list[dict[str, Any]] = []
+    removed_dir: Path | None = None
+    found = False
+    for entry in entries:
+        if entry.get("id") != report_id:
+            kept.append(entry)
+            continue
+        found = True
+        rel_dir = entry.get("directory")
+        if rel_dir:
+            report_dir = base / rel_dir
+            if report_dir.is_dir():
+                shutil.rmtree(report_dir, ignore_errors=True)
+                removed_dir = report_dir
+    if not found:
+        return False
+    _save_index(base, kept)
+    if removed_dir is not None:
+        logger.info("Удалён брифинг: %s", removed_dir)
+    else:
+        logger.info("Удалена запись индекса брифинга: %s", report_id)
+    return True
+
+
 def persist_report_result(result: ReportResult) -> SavedReport | None:
     if not reports_config()["enabled"]:
         return None
